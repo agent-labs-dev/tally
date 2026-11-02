@@ -15,7 +15,7 @@ First release.
   Key Vault through their own CLIs, never values. `check` reports a value unchanged for `staleDays` as `stale`, a
   declared secret the store lacks as `missing`, and a stored secret nobody declared as `unregistered`, and a store's
   expiry fills in an unknown one. `--offline` skips the stores for a quick check.
-- **Keys found from the code.** Credential-named variables in tracked env templates count as keys the code reads,
+- **Keys found from the code.** Credential-named variables in tracked env templates, commented out or not, count as keys the code reads,
   next to the secrets workflows reference. `tally init` drafts both, and `check` reports any nobody declared. Only
   names are read, and `credentialNames` adds naming conventions.
 - **One file per repository.** Settings and keys live together in `.tally.yaml`: `warnDays`, `issueRepo`,

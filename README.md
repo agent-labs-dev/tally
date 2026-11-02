@@ -25,8 +25,9 @@ Agents are the main users. Output is JSON when asked for it, and the exit codes 
    ```
 
    Every `${{ secrets.NAME }}` in `.github/workflows` and every credential-named variable in a tracked env template
-   (`.env.example`, `.env.sample`, `.env.template`) becomes an entry with `service: unknown`, `expires: unknown` and
-   `limit: unknown`. Only names are read: never a value, and never a real `.env`.
+   (`.env.example`, `.env.sample`, `.env.template`), including a commented-out `# NAME=` line for an optional key,
+   becomes an entry with `service: unknown`, `expires: unknown` and `limit: unknown`. Only names are read: never a
+   value, and never a real `.env`.
 
 2. Fill in the facts. Look each key up in the provider's dashboard and set `service`, `owner`, `locations`, `expires`
    and `limit`. If the provider sets no expiry, write `none` and say why in `expiresNote`.
