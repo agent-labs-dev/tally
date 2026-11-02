@@ -2,6 +2,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { addSecretPatterns, type Entry, looksSecret, parseEntry, serialise, withheld } from "./schema";
+import type { Source } from "./stores";
+import { stores } from "./stores";
 
 /** Settings that differ between repositories, kept in the tally file so none of them is a code change. */
 export interface Config {
@@ -13,6 +15,10 @@ export interface Config {
   ignore: string[];
   /** Extra regular expressions for variable names in env templates that hold credentials, beyond the built-in ones. */
   credentialNames: string[];
+  /** Secret stores to read names and dates from, as `kind: scope` pairs with an optional `filter`. */
+  sources: Source[];
+  /** A key whose stored value has not changed in this many days is reported as stale. */
+  staleDays: number;
   /** Where `issues sync` files issues when `--repo` is not given. */
   issueRepo?: string;
 }
@@ -28,8 +34,37 @@ export interface LoadedTallyFile {
   errors: LoadProblem[];
 }
 
-const settings = new Set(["warnDays", "issueRepo", "secretPatterns", "ignore", "credentialNames", "keys"]);
+const settings = new Set([
+  "warnDays",
+  "staleDays",
+  "issueRepo",
+  "secretPatterns",
+  "ignore",
+  "credentialNames",
+  "sources",
+  "keys",
+]);
 const repoName = /^[\w.-]+\/[\w.-]+$/;
+
+/** `sources:` is a list of `kind: scope` pairs, each with an optional `filter`, naming a store tally can read. */
+function parseSources(value: unknown): Source[] | string {
+  const usage = `sources must be a list of \`kind: scope\` pairs, where kind is one of ${Object.keys(stores).join(", ")}`;
+  if (!Array.isArray(value)) return usage;
+  const sources: Source[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return usage;
+    const { filter, ...rest } = item as Record<string, unknown>;
+    const pairs = Object.entries(rest);
+    const [kind, scope] = pairs[0] ?? [];
+    if (pairs.length !== 1 || !kind || !(kind in stores) || typeof scope !== "string" || !scope) return usage;
+    // A project, region or vault name: never a flag, a path or anything with spaces.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(scope))
+      return `${kind} scope ${scope} must be a plain ${stores[kind]?.scope}`;
+    if (filter !== undefined && (typeof filter !== "string" || !filter)) return "a source filter must be text";
+    sources.push({ kind, scope, ...(filter ? { filter } : {}) });
+  }
+  return sources;
+}
 
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return undefined;
@@ -37,7 +72,7 @@ function stringList(value: unknown): string[] | undefined {
 }
 
 export function freshConfig(): Config {
-  return { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [] };
+  return { warnDays: 30, staleDays: 365, secretPatterns: [], ignore: [], credentialNames: [], sources: [] };
 }
 
 /**
@@ -80,6 +115,16 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
   if (warnDays !== undefined) {
     if (Number.isInteger(warnDays) && (warnDays as number) > 0) config.warnDays = warnDays as number;
     else errors.push({ path, message: "warnDays must be a positive whole number" });
+  }
+  const staleDays = record.staleDays;
+  if (staleDays !== undefined) {
+    if (Number.isInteger(staleDays) && (staleDays as number) > 0) config.staleDays = staleDays as number;
+    else errors.push({ path, message: "staleDays must be a positive whole number" });
+  }
+  if (record.sources !== undefined) {
+    const parsed = parseSources(record.sources);
+    if (typeof parsed === "string") errors.push({ path, message: parsed });
+    else config.sources = parsed;
   }
   const issueRepo = record.issueRepo;
   if (issueRepo !== undefined) {
@@ -154,10 +199,12 @@ export async function writeTallyFile(path: string, config: Config, entries: read
 
   const document: Record<string, unknown> = {
     warnDays: config.warnDays,
+    staleDays: config.staleDays,
     issueRepo: config.issueRepo,
     secretPatterns: config.secretPatterns,
     ignore: config.ignore,
     credentialNames: config.credentialNames,
+    sources: config.sources.map(({ kind, scope, filter }) => ({ [kind]: scope, ...(filter ? { filter } : {}) })),
     keys,
   };
   if (document.issueRepo === undefined) delete document.issueRepo;

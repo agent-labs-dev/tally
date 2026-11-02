@@ -5,6 +5,7 @@ import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
 import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
 import { referencedSecrets, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
+import { observe, type Run, runCommand } from "./stores";
 import {
   type Config,
   findTallyFile,
@@ -21,9 +22,9 @@ const help = `tally tracks a repository's API keys: owner, where each one is sto
 Output is JSON when stdout is not a terminal or with --json.
 
   tally init [--owner HANDLE]   write .tally.yaml with a draft entry per secret the workflows and env templates name
-  tally check [--today YYYY-MM-DD]
-                                 report expiring keys, missing facts and secrets no workflow declares, action findings exit 3
-  tally notify [--today YYYY-MM-DD]
+  tally check [--today YYYY-MM-DD] [--offline]
+                                 report expiring, stale, undeclared and missing keys and missing facts, action findings exit 3
+  tally notify [--today YYYY-MM-DD] [--offline]
                                  run check, then send a desktop notification per action finding
   tally list [--group G] [--service S]
                                  list declared keys, filtered
@@ -43,6 +44,8 @@ Global flags: --config PATH, --json.
 Defaults: --config from TALLY_CONFIG, then the nearest .tally.yaml up to the repository root, then
 $XDG_CONFIG_HOME/tally/tally.yaml (~/.config/tally/tally.yaml) for keys that live on one machine.
 Expiry and limit default to unknown, which check reports as a gap.
+sources: in the tally file names secret stores (gcp, aws, azure) whose names and dates are read through their own CLI
+and login, never their values. check and notify take --offline to skip them.
 Exit codes: 0 ok, 1 error, 2 usage, 3 action findings, so rotate the keys they name.`;
 
 interface Flags {
@@ -65,6 +68,7 @@ interface Flags {
   note?: string;
   repo?: string;
   dryRun: boolean;
+  offline: boolean;
 }
 
 class UsageError extends Error {}
@@ -78,6 +82,8 @@ export interface IO {
   cwd?: string;
   /** Sends a desktop notification. Injected so tests never touch the desktop. */
   notify?: (message: string) => Promise<void>;
+  /** Runs a secret store's CLI. Injected so tests never reach a real store. */
+  run?: Run;
 }
 
 interface Result {
@@ -92,7 +98,15 @@ function usageDate(flag: string, value: string): string {
 }
 
 function parse(args: readonly string[]): Flags {
-  const flags: Flags = { positional: [], json: false, help: false, version: false, locations: [], dryRun: false };
+  const flags: Flags = {
+    positional: [],
+    json: false,
+    help: false,
+    version: false,
+    locations: [],
+    dryRun: false,
+    offline: false,
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] as string;
     const value = () => {
@@ -104,6 +118,7 @@ function parse(args: readonly string[]): Flags {
     else if (arg === "--help" || arg === "-h") flags.help = true;
     else if (arg === "--version") flags.version = true;
     else if (arg === "--dry-run") flags.dryRun = true;
+    else if (arg === "--offline") flags.offline = true;
     else if (arg === "--config") flags.config = value();
     else if (arg === "--today") flags.today = usageDate(arg, value());
     else if (arg === "--group") flags.group = value();
@@ -156,20 +171,28 @@ function scannedRepo(root: string, env: Record<string, string | undefined>): str
   return proc.exitCode === 0 ? remotePattern.exec(proc.stdout.toString().trim())?.[1] : undefined;
 }
 
-/** The checkout holding the tally file is the one whose workflows are scanned, wherever the file sits inside it. */
-function buildContext(
+/**
+ * The checkout holding the tally file is the one whose workflows are scanned, wherever the file sits inside it.
+ * The configured stores are read here too, unless `--offline` asks to skip them.
+ */
+async function buildContext(
   flags: Flags,
   loaded: { path: string; config: Config },
   env: Record<string, string | undefined>,
-): Context {
+  io: IO,
+): Promise<Context> {
   const root = repositoryRoot(dirname(loaded.path));
+  const sources = flags.offline ? [] : loaded.config.sources;
   return {
     today: flags.today ?? todayUtc(),
     warnDays: loaded.config.warnDays,
+    staleDays: loaded.config.staleDays,
     referenced: referencedSecrets(root),
     templated: templatedSecrets(root, loaded.config.credentialNames),
     ignore: loaded.config.ignore,
     repo: scannedRepo(root, env),
+    sources,
+    observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand) : undefined,
   };
 }
 
@@ -241,7 +264,7 @@ function schema() {
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
-    configFields: "warnDays, issueRepo, secretPatterns, ignore, credentialNames, keys",
+    configFields: "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, sources, keys",
   };
 }
 
@@ -290,7 +313,7 @@ async function dispatch(
       expectNoArgs(rest, command);
       const loaded = await loadAll(flags, env, cwd);
       if (loaded.errors.length > 0) return failed(loaded.errors);
-      const context = buildContext(flags, loaded, env);
+      const context = await buildContext(flags, loaded, env, io);
       const findings = reconcile(loaded.entries, context);
       const summary = {
         action: findings.filter((finding) => finding.severity === "action").length,
@@ -396,7 +419,7 @@ async function dispatch(
       if (loaded.errors.length > 0) return failed(loaded.errors);
       // With no repo at all, gh infers it from the working directory.
       const repo = flags.repo ?? loaded.config.issueRepo ?? env.GITHUB_REPOSITORY;
-      const context = buildContext(flags, loaded, env);
+      const context = await buildContext(flags, loaded, env, io);
       const findings = reconcile(loaded.entries, context);
       const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, loaded.entries), flags.dryRun);
       const text = actions
@@ -430,6 +453,9 @@ export async function main(args: string[], io: IO = {}): Promise<number> {
     }
     const [command, ...rest] = flags.positional;
     if (flags.dryRun && command !== "issues") throw new UsageError("--dry-run only applies to issues sync");
+    // A sync that skipped the stores would close their issues as if the findings had cleared.
+    if (flags.offline && command !== "check" && command !== "notify")
+      throw new UsageError("--offline only applies to check and notify");
     if (command === undefined)
       throw new UsageError("usage: tally init|check|notify|list|validate|add|rotated|issues|schema, or tally --help");
     const result = await dispatch(flags, command, rest, io, env, cwd);

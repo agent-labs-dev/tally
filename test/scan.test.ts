@@ -77,13 +77,18 @@ describe("templatedSecrets", () => {
   test("reads credential names from tracked templates and nothing from a real .env", () => {
     const root = checkout({
       ".env.example":
-        "PAYMENTS_API_KEY=replace-me\nexport DEPLOY_TOKEN=\nSERVER_PORT=8080\nCLIENT_ID=abc\n# OLD_SECRET=\n",
+        "PAYMENTS_API_KEY=replace-me\nexport DEPLOY_TOKEN=\nSERVER_PORT=8080\nCLIENT_ID=abc\n# OPTIONAL_SECRET=\n# Set MAIL_TOKEN=x in prose\n",
       "services/web/.env.sample": "SIGNING_SECRET=\n",
       ".env": "REAL_ONLY_KEY=x\n",
       "untracked.env.example": "UNTRACKED_KEY=\n",
     });
     const found = templatedSecrets(root);
-    expect([...(found?.keys() ?? [])].sort()).toEqual(["DEPLOY_TOKEN", "PAYMENTS_API_KEY", "SIGNING_SECRET"]);
+    expect([...(found?.keys() ?? [])].sort()).toEqual([
+      "DEPLOY_TOKEN",
+      "OPTIONAL_SECRET",
+      "PAYMENTS_API_KEY",
+      "SIGNING_SECRET",
+    ]);
     expect(found?.get("SIGNING_SECRET")).toEqual(["services/web/.env.sample"]);
   });
 

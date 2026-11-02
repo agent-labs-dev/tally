@@ -64,7 +64,8 @@ export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIALS
 
 /** Committed templates that list the variables an app reads. A real `.env` is never opened. */
 const template = /(^|\/)(\.env\.(example|sample|template|dist)|[\w.-]+\.env\.example)$/;
-const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+// A commented-out line is an optional key the template still documents, so it counts too.
+const assignment = /^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
 
 /**
  * Credential-named variables the code reads, from the env templates git tracks, mapped to the templates that list

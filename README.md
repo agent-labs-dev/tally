@@ -25,8 +25,9 @@ Agents are the main users. Output is JSON when asked for it, and the exit codes 
    ```
 
    Every `${{ secrets.NAME }}` in `.github/workflows` and every credential-named variable in a tracked env template
-   (`.env.example`, `.env.sample`, `.env.template`) becomes an entry with `service: unknown`, `expires: unknown` and
-   `limit: unknown`. Only names are read: never a value, and never a real `.env`.
+   (`.env.example`, `.env.sample`, `.env.template`), including a commented-out `# NAME=` line for an optional key,
+   becomes an entry with `service: unknown`, `expires: unknown` and `limit: unknown`. Only names are read: never a
+   value, and never a real `.env`.
 
 2. Fill in the facts. Look each key up in the provider's dashboard and set `service`, `owner`, `locations`, `expires`
    and `limit`. If the provider sets no expiry, write `none` and say why in `expiresNote`.
@@ -67,6 +68,8 @@ keys:
 | Setting | Meaning |
 |---|---|
 | `warnDays` | A dated key raises an issue this many days before it expires. Default 30 |
+| `staleDays` | A stored value unchanged for this many days is reported as stale. Default 365 |
+| `sources` | Secret stores to read names and dates from. See [Secret stores](#secret-stores) |
 | `issueRepo` | Where `issues sync` files issues. Default: `GITHUB_REPOSITORY`, else gh infers the repository from the cwd |
 | `secretPatterns` | Extra credential regular expressions, added to the built-in guard |
 | `ignore` | Names the scan finds that are not credentials, such as ids and URLs |
@@ -124,6 +127,10 @@ rotated.
 | `unknown-expiry`, `unknown-limit` | gap | Nobody has looked yet. The gaps share one digest issue |
 | `unregistered` | action | A workflow or an env template names a secret no entry declares |
 | `unused` | action | An entry declares an Actions secret no workflow reads |
+| `stale` | action | A store says the value has not changed in `staleDays` |
+| `missing` | action | An entry names a secret in a store that was read, and the store does not hold it |
+
+A store that holds a secret no entry declares also reports it as `unregistered`.
 
 A workflow secret is declared by a `github` location in this repository. A template variable is declared by any
 location whose last segment is its name, such as `github: NAME`, `env: NAME` or `vault: kv/app/NAME`, because the
@@ -140,6 +147,52 @@ Exit codes:
 | 3 | Action findings |
 
 Gap findings never change the exit code. They appear in the output and in the digest issue.
+
+## Secret stores
+
+The code says which keys exist. A secret store says when each value last changed, and sometimes when it expires.
+`sources:` lists the stores to read, as `kind: scope` pairs:
+
+```yaml
+sources:
+  - gcp: my-project
+    filter: labels.app=web   # optional, in the store's own filter syntax
+  - aws: eu-west-1
+    filter: payments/        # optional name prefix
+  - azure: my-vault
+```
+
+| Kind | Scope | Reads | Changed date |
+|---|---|---|---|
+| `gcp` | project id | `gcloud secrets list`, `gcloud secrets versions list` | newest enabled version |
+| `aws` | region | `aws secretsmanager list-secrets` | last rotation, else last change |
+| `azure` | vault name | `az keyvault secret list` | last update |
+
+tally runs each vendor's CLI with the login it already has. It runs only the listing commands above and refuses
+anything else, so it never prints, sets or backs up a value. Give it a role that cannot read
+values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets` on AWS, and the `list` secret
+permission on Azure.
+
+A location matches a stored secret when its kind is the source kind and its ref is the name, `SCOPE/NAME`, or the
+store's full path (`projects/SCOPE/secrets/NAME`, or a vault's secret URL). Names match in any letter case. An expiry the store reports fills in an entry whose `expires` is
+`unknown`. A filtered source lists only part of its store, so it never reports a declared secret as `missing`. A
+store that cannot be read fails the run, so a check never passes on a partial view. `tally check
+--offline` skips the stores; `issues sync` never does, because skipping them would close their issues.
+
+In CI, log in to the store before the tally step, for example with workload identity on GCP:
+
+```yaml
+    permissions: { contents: read, issues: write, id-token: write }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      # GitHub's Ubuntu runners ship gcloud, and this step hands it the credentials.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: projects/NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
+          service_account: tally-reader@PROJECT.iam.gserviceaccount.com
+      - uses: OWNER/tally@v1
+```
 
 ## Commands
 
@@ -236,8 +289,11 @@ Exit code 3 from `notify` means something needs rotating. A timer ignores it; a 
 ## Extend it
 
 - New providers, groups and secret stores are new entries or locations. There is no list of them in the code.
+- Reading a new kind of store is one more `Store` in `src/stores.ts`: a scope, and a `list` that turns the vendor
+  CLI's listing into names and dates, plus its listing command in `metadataCommands`, the only commands tally runs.
 - New checks are `Rule` functions in `src/reconcile.ts`. A rule takes every entry plus the context and returns
-  findings. It never writes. The default rules run expiry, limit and the two scan checks.
+  findings. It never writes. The default rules run expiry, limit, the scan checks, staleness and the store
+  comparison.
 - Extra credential formats go in `secretPatterns`, as regular expression strings. They are added to the built-in
   guard, which rejects known provider prefixes and long random-looking tokens.
 - Any other setting, such as `warnDays` or `issueRepo`, lives in the tally file.

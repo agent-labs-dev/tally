@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/cli";
 import type { Gh } from "../src/issues";
+import type { Run } from "../src/stores";
 import { loadTallyFile } from "../src/tallyfile";
 
 interface Reply {
@@ -17,6 +18,7 @@ interface RunOptions {
   isTTY?: boolean;
   env?: Record<string, string | undefined>;
   notify?: (message: string) => Promise<void>;
+  run?: Run;
 }
 
 function harness() {
@@ -31,6 +33,7 @@ function harness() {
       cwd: root,
       gh: options.gh,
       notify: options.notify,
+      run: options.run,
       stdout: (text: string) => out.push(text),
     });
     const text = out.join("\n");
@@ -104,6 +107,8 @@ describe("cli", () => {
       secretPatterns: [],
       ignore: ["BUILD_ID"],
       credentialNames: [],
+      sources: [],
+      staleDays: 365,
       issueRepo: "owner/name",
     });
     expect(loaded.entries.map((entry) => entry.id)).toEqual(["payments-api"]);
@@ -134,6 +139,25 @@ describe("cli", () => {
     expect(result.code).toBe(3);
     expect(result.json.today).toBe("2026-11-02");
     expect(result.json.summary).toEqual({ action: 1, gap: 0 });
+  });
+
+  test("check reads the configured stores, and --offline skips them", async () => {
+    const { config, run } = harness();
+    writeFileSync(
+      config,
+      "sources:\n  - aws: eu-west-1\nkeys:\n  - id: payments-api\n    service: example-provider\n    owner: unknown\n    locations:\n      - aws: payments/api\n    expires: none\n    expiresNote: never set\n    limit: none\n",
+    );
+    const calls: string[][] = [];
+    const store: Run = async (argv) => {
+      calls.push(argv);
+      return JSON.stringify({ SecretList: [{ Name: "payments/api", LastChangedDate: "2020-01-01T00:00:00Z" }] });
+    };
+    const result = await run(["check", "--today", "2026-11-02"], { run: store });
+    expect(result.code).toBe(3);
+    expect((result.json.findings as { id: string }[]).map((finding) => finding.id)).toEqual(["stale:payments-api"]);
+    expect((await run(["check", "--offline", "--today", "2026-11-02"], { run: store })).code).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect((await run(["issues", "sync", "--offline"], { run: store })).code).toBe(2);
   });
 
   test("check exits 0 when every expiry is far out", async () => {
@@ -227,7 +251,9 @@ describe("cli", () => {
     expect(result.code).toBe(0);
     expect(result.json.schemaVersion).toBe(1);
     expect(result.json.exitCodes).toEqual({ ok: 0, error: 1, usage: 2, findings: 3 });
-    expect(result.json.configFields).toBe("warnDays, issueRepo, secretPatterns, ignore, credentialNames, keys");
+    expect(result.json.configFields).toBe(
+      "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, sources, keys",
+    );
   });
 });
 
