@@ -6,7 +6,7 @@ import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
 import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
 import { referencedSecrets, skipping, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
-import { observe, type Run, runCommand } from "./stores";
+import { type Fetch, observe, type Run, runCommand } from "./stores";
 import {
   type Config,
   findTallyFile,
@@ -49,8 +49,9 @@ Global flags: --config PATH, --json.
 Defaults: --config from TALLY_CONFIG, then the nearest .tally.yaml up to the repository root, then
 $XDG_CONFIG_HOME/tally/tally.yaml (~/.config/tally/tally.yaml) for keys that live on one machine.
 Expiry and limit default to unknown, which check reports as a gap.
-sources: in the tally file names secret stores (gcp, aws, azure) whose names and dates are read through their own CLI
-and login, never their values. check and notify take --offline to skip them.
+sources: in the tally file names secret stores (gcp, aws, azure), read through their own CLI and login, and provider
+key listings (anthropic, openai, openrouter, cloudflare), read with an admin token from the environment. Only names,
+dates and limits are read, never a value. --offline skips them all.
 Exit codes: 0 ok, 1 error, 2 usage, 3 action findings, so rotate the keys they name.`;
 
 interface Flags {
@@ -89,6 +90,7 @@ export interface IO {
   notify?: (message: string) => Promise<void>;
   /** Runs a secret store's CLI. Injected so tests never reach a real store. */
   run?: Run;
+  fetch?: Fetch;
 }
 
 interface Result {
@@ -205,12 +207,13 @@ async function buildContext(
     today: flags.today ?? todayUtc(),
     warnDays: loaded.config.warnDays,
     staleDays: loaded.config.staleDays,
+    idleDays: loaded.config.idleDays,
     referenced: referencedSecrets(root, skip),
     templated: templatedSecrets(root, loaded.config.credentialNames, skip),
     ignore: loaded.config.ignore,
     repo: scannedRepo(root, env),
     sources,
-    observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand) : undefined,
+    observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand, io.fetch ?? fetch, env) : undefined,
   };
 }
 
@@ -284,7 +287,8 @@ function schema() {
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
-    configFields: "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
+    configFields:
+      "warnDays, staleDays, idleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
   };
 }
 

@@ -1,6 +1,7 @@
 import { type Context, isStored } from "./reconcile";
 import { credentialName } from "./scan";
 import type { Entry, Location } from "./schema";
+import { stores } from "./stores";
 
 export interface Draft {
   entries: Entry[];
@@ -63,7 +64,8 @@ export function draft(existing: readonly Entry[], context: Context, owner: strin
       secret: observation.name.toUpperCase(),
       location: { kind: observation.kind, ref: `${observation.scope}/${observation.name}` },
       has: (entry) => entry.locations.some((at) => isStored(at, observation)),
-      draftable: credentialName.test(observation.name.toUpperCase()),
+      // A provider key's name is free text, not a variable name, so it is linked by hand rather than drafted.
+      draftable: !stores[observation.kind]?.api && credentialName.test(observation.name.toUpperCase()),
     });
 
   for (const { secret, location, has, draftable } of found) {

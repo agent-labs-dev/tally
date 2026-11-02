@@ -25,6 +25,8 @@ export interface Context {
   warnDays: number;
   /** Days without a change before a stored value is reported as stale. */
   staleDays?: number;
+  /** Days since a provider last saw a key used before it is reported as idle. */
+  idleDays?: number;
   /** The stores that were read, so a declared secret can be missing only from a store that was looked at. */
   sources?: Source[];
   /** What those stores hold: names and dates, never values. */
@@ -105,17 +107,37 @@ function observationsOf(entry: Entry, observed: readonly Observation[] = []): Ob
   return observed.filter((observation) => entry.locations.some((location) => isStored(location, observation)));
 }
 
-/** The recorded expiry, or the earliest one a store reports when nobody recorded it. */
-function expiryOf(entry: Entry, observed?: readonly Observation[]): string {
-  if (entry.expires !== "unknown") return entry.expires;
-  const dates = observationsOf(entry, observed).flatMap((observation) => observation.expires ?? []);
-  return dates.sort()[0] ?? "unknown";
+/**
+ * The recorded value, or what the stores report when nobody recorded it: the earliest date, then `none` when a
+ * provider says there is none. `reported` tells a provider's `none` from one a person wrote with a reason.
+ */
+function observedOr(
+  recorded: string,
+  entry: Entry,
+  observed: readonly Observation[] | undefined,
+  field: "expires" | "limit",
+): { value: string; reported: boolean } {
+  if (recorded !== "unknown") return { value: recorded, reported: false };
+  const values = observationsOf(entry, observed).flatMap((observation) => observation[field] ?? []);
+  const [first] = values.filter((value) => value !== "none").sort();
+  return { value: first ?? (values.length ? "none" : "unknown"), reported: true };
 }
 
 export const expiryRule: Rule = (entries, { today, warnDays, observed }): Finding[] =>
   entries.flatMap((entry): Finding[] => {
-    const expires = expiryOf(entry, observed);
-    if (expires === "none") return [];
+    const { value: expires, reported } = observedOr(entry.expires, entry, observed, "expires");
+    if (expires === "none")
+      return reported
+        ? [
+            {
+              id: `gap:${entry.id}:expiry`,
+              kind: "no-expiry",
+              severity: "gap",
+              key: entry.id,
+              title: `${entry.id} never expires, says its provider`,
+            },
+          ]
+        : [];
     if (expires === "unknown")
       return [
         {
@@ -141,20 +163,31 @@ export const expiryRule: Rule = (entries, { today, warnDays, observed }): Findin
     ];
   });
 
-export const limitRule: Rule = (entries) =>
-  entries.flatMap((entry) =>
-    entry.limit === "unknown"
-      ? [
-          {
-            id: `gap:${entry.id}:limit`,
-            kind: "unknown-limit",
-            severity: "gap",
-            key: entry.id,
-            title: `${entry.id} has no recorded limit`,
-          },
-        ]
-      : [],
-  );
+export const limitRule: Rule = (entries, { observed }) =>
+  entries.flatMap((entry): Finding[] => {
+    const { value, reported } = observedOr(entry.limit, entry, observed, "limit");
+    if (value === "unknown")
+      return [
+        {
+          id: `gap:${entry.id}:limit`,
+          kind: "unknown-limit",
+          severity: "gap",
+          key: entry.id,
+          title: `${entry.id} has no recorded limit`,
+        },
+      ];
+    if (value === "none" && reported)
+      return [
+        {
+          id: `gap:${entry.id}:limit`,
+          kind: "no-limit",
+          severity: "gap",
+          key: entry.id,
+          title: `${entry.id} has no spend limit, says its provider`,
+        },
+      ];
+    return [];
+  });
 
 /** The last segment of any location's ref, which is the variable or secret name in every store convention. */
 function storedName(ref: string): string {
@@ -277,7 +310,37 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
   return findings;
 };
 
-export const defaultRules: Rule[] = [expiryRule, limitRule, unregisteredRule, unusedRule, staleRule, storeRule];
+/** A key its provider has not seen used in `idleDays` is one nothing needs, so a candidate to revoke. The newest use decides. */
+export const idleRule: Rule = (entries, { today, idleDays = 90, observed }) =>
+  entries.flatMap((entry): Finding[] => {
+    const used = observationsOf(entry, observed)
+      .flatMap((observation) => observation.lastUsed ?? [])
+      .sort()
+      .at(-1);
+    if (!used) return [];
+    const age = -daysUntil(used, today);
+    if (age < idleDays) return [];
+    return [
+      {
+        id: `idle:${entry.id}`,
+        kind: "idle",
+        severity: "action",
+        key: entry.id,
+        title: `${entry.id} was last used ${used}, ${age} days ago`,
+        detail: "Revoke it if nothing needs it, or raise `idleDays` if a key this quiet is expected.",
+      },
+    ];
+  });
+
+export const defaultRules: Rule[] = [
+  expiryRule,
+  limitRule,
+  unregisteredRule,
+  unusedRule,
+  staleRule,
+  idleRule,
+  storeRule,
+];
 
 export function reconcile(entries: readonly Entry[], context: Context, rules = defaultRules): Finding[] {
   return rules

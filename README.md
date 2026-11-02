@@ -72,6 +72,7 @@ keys:
 |---|---|
 | `warnDays` | A dated key raises an issue this many days before it expires. Default 30 |
 | `staleDays` | A stored value unchanged for this many days is reported as stale. Default 365 |
+| `idleDays` | A key its provider has not seen used for this many days is reported as idle. Default 90 |
 | `sources` | Secret stores to read names and dates from. See [Secret stores](#secret-stores) |
 | `issueRepo` | Where `issues sync` files issues. Default: `GITHUB_REPOSITORY`, else gh infers the repository from the cwd |
 | `secretPatterns` | Extra credential regular expressions, added to the built-in guard |
@@ -129,10 +130,12 @@ rotated.
 |---|---|---|
 | `expired`, `expiring` | action | The date has passed, or is inside `warnDays` |
 | `unknown-expiry`, `unknown-limit` | gap | Nobody has looked yet. The gaps share one digest issue |
+| `no-expiry`, `no-limit` | gap | The entry records nothing, and its provider says the key never expires or has no spend limit |
 | `unregistered` | action | A workflow or an env template names a secret no entry declares |
 | `unused` | action | An entry declares an Actions secret no workflow reads |
 | `stale` | action | A store says the value has not changed in `staleDays` |
 | `missing` | action | An entry names a secret in a store that was read, and the store does not hold it |
+| `idle` | action | Its provider has not seen the key used in `idleDays` |
 
 A store that holds a secret no entry declares also reports it as `unregistered`.
 
@@ -196,6 +199,51 @@ In CI, log in to the store before the tally step, for example with workload iden
           workload_identity_provider: projects/NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
           service_account: tally-reader@PROJECT.iam.gserviceaccount.com
       - uses: OWNER/tally@v1
+```
+
+## Provider key listings
+
+Some providers list their own keys with expiry, spend limit and last use, through an admin API. These are sources
+too, read with an admin token from an environment variable:
+
+```yaml
+sources:
+  - openrouter: team             # a label for the account, used in locations
+  - cloudflare: user             # or a 32-character account id
+  - anthropic: org
+    filter: wrkspc_01            # optional workspace id
+  - openai: org
+    filter: proj_abc             # optional project id
+    token: OPENAI_READER         # optional; the variable to read instead of the default
+```
+
+| Kind | Default token variable | Token to create | Reports |
+|---|---|---|---|
+| `cloudflare` | `TALLY_CLOUDFLARE_TOKEN_READER` | A custom token with only API Tokens Read (user) or Account API Tokens Read | expiry, last use |
+| `openrouter` | `TALLY_OPENROUTER_MANAGEMENT_KEY` | A management key, scoped to one workspace where possible | expiry, spend limit, last use |
+| `anthropic` | `TALLY_ANTHROPIC_ADMIN_KEY` | An Admin API key | expiry |
+| `openai` | `TALLY_OPENAI_ADMIN_KEY` | An admin key | expiry, last use |
+
+Only Cloudflare offers a token that can read and do nothing else. The others can also create and revoke keys, so give
+them the shortest expiry the provider allows, declare each one in `.tally.yaml` so tally warns before it expires, and
+keep them out of anything a pull request can run (see below).
+
+The token is read in one place and sent only to that provider's own API host. That code sends GET requests and
+nothing else, only to the provider's key or project listing paths, refuses redirects, stops after 20 seconds and
+10 MB, and reports a failure by HTTP status alone, never the response. Readers keep the key's name, dates, limit and
+last use, and drop everything else the provider returns, including partial key hints. A location for a provider key
+is `KIND: LABEL/NAME`, such as `openrouter: team/app`, or `openai: org/PROJECT_ID/NAME`. Provider key names are free
+text, so `init` links one onto an entry only when an entry already names it, and never drafts one.
+
+In CI, keep the admin tokens in a GitHub environment that only the default branch can use, so no pull request can
+read them, and pass them only to the tally step:
+
+```yaml
+    environment: tally
+    steps:
+      - uses: OWNER/tally@v1
+        env:
+          TALLY_OPENROUTER_MANAGEMENT_KEY: ${{ secrets.TALLY_OPENROUTER_MANAGEMENT_KEY }}
 ```
 
 ## Commands
