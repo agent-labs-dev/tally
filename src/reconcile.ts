@@ -92,10 +92,8 @@ export function isStored(location: Location, observation: Observation): boolean 
   const name = observation.name.toUpperCase();
   if (ref === name) return true;
   if (!ref.endsWith(`/${name}`)) return false;
-  return ref
-    .slice(0, -name.length - 1)
-    .split("/")
-    .includes(observation.scope.toUpperCase());
+  // The scope may itself hold a slash (`OWNER/NAME`), so it must appear as whole consecutive segments.
+  return `/${ref.slice(0, -name.length - 1)}/`.includes(`/${observation.scope.toUpperCase()}/`);
 }
 
 /** A secret URL such as `https://VAULT.vault.azure.net/secrets/NAME` as the path `VAULT/secrets/NAME`. */
@@ -201,7 +199,13 @@ function storedName(ref: string): string {
  */
 export const unregisteredRule: Rule = (entries, { referenced, templated, ignore, repo }) => {
   const ignored = new Set(ignore.map((name) => name.toUpperCase()));
-  const inGithub = new Set(entries.flatMap(githubRefs).map((ref) => localSecret(ref, repo)));
+  // An organization secret (`ORG/NAME`, ORG owning this repository) also serves this repository's workflows.
+  const owner = repo?.split("/")[0]?.toUpperCase();
+  const orgSecret = (ref: string) => {
+    const [scope, name, ...rest] = ref.split("/");
+    return !rest.length && name && scope?.toUpperCase() === owner ? name.toUpperCase() : undefined;
+  };
+  const inGithub = new Set(entries.flatMap(githubRefs).flatMap((ref) => [localSecret(ref, repo), orgSecret(ref)]));
   const anywhere = new Set(entries.flatMap((entry) => entry.locations.map((location) => storedName(location.ref))));
   const missing = new Map<string, string[]>();
   for (const [name, files] of referenced ?? []) if (!inGithub.has(name)) missing.set(name, [...files]);
@@ -266,7 +270,7 @@ export const staleRule: Rule = (entries, { today, staleDays = 365, observed }) =
  * Compares the stores that were read with the declarations: a secret a store holds that no entry names is
  * `unregistered`, and a declared location in a store that was read but does not hold it is `missing`.
  */
-export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
+export const storeRule: Rule = (entries, { observed, sources, ignore, referenced }) => {
   if (!observed || !sources?.length) return [];
   const ignored = new Set(ignore.map((name) => name.toUpperCase()));
   const locations = entries.flatMap((entry) => entry.locations.map((location) => ({ entry, location })));
@@ -274,6 +278,8 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
   for (const observation of observed) {
     if (ignored.has(observation.name.toUpperCase())) continue;
     if (locations.some(({ location }) => isStored(location, observation))) continue;
+    // A workflow secret nobody declared is already reported by the scan, under its own id.
+    if (observation.kind === "github" && referenced?.has(storedName(observation.name))) continue;
     const where = `${observation.kind}: ${observation.scope}`;
     findings.push({
       id: `unregistered:${observationKey(observation)}`,

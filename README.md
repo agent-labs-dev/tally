@@ -167,6 +167,9 @@ sources:
   - aws: eu-west-1
     filter: payments/        # optional name prefix
   - azure: my-vault
+  - github: owner/name     # this repository's Actions and environment secrets
+    filter: production     # optional: only these environments, comma-separated
+  - github: my-org         # an organization's secrets
 ```
 
 | Kind | Scope | Reads | Changed date |
@@ -174,11 +177,18 @@ sources:
 | `gcp` | project id | `gcloud secrets list`, `gcloud secrets versions list` | newest enabled version |
 | `aws` | region | `aws secretsmanager list-secrets` | last rotation, else last change |
 | `azure` | vault name | `az keyvault secret list` | last update |
+| `github` | `OWNER/NAME` or an organization | `gh api` secret and environment listings | last update |
 
 tally runs each vendor's CLI with the login it already has. It runs only the listing commands above and refuses
 anything else, so it never prints, sets or backs up a value. Give it a role that cannot read
 values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets` on AWS, and the `list` secret
 permission on Azure.
+
+GitHub never returns a secret value through its API, only names and dates. tally runs `gh api` only as an exact
+listing command, so no extra argument can turn it into a write. Listing secrets needs admin access, which a workflow's
+own `GITHUB_TOKEN` does not have: in CI, use a GitHub App token with the Secrets and Organization secrets read
+permissions, passed as `GH_TOKEN`. A repository secret is named `NAME`, an environment secret `env:ENVIRONMENT/NAME`,
+and an organization secret is declared as `github: ORG/NAME`.
 
 A location matches a stored secret when its kind is the source kind and its ref is the name, `SCOPE/NAME`, or the
 store's full path (`projects/SCOPE/secrets/NAME`, or a vault's secret URL). Names match in any letter case. An expiry the store reports fills in an entry whose `expires` is

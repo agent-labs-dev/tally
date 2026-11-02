@@ -314,3 +314,53 @@ test("cloudflare without a total keeps paging until a short page", async () => {
   expect(await observe([{ kind: "cloudflare", scope: "user" }], noRun, fetcher, env)).toHaveLength(51);
   expect(requests).toHaveLength(2);
 });
+
+describe("github reader", () => {
+  const secrets = ".secrets[] | [.name, .updated_at] | @tsv";
+  test("reads repository, chosen environment and organization secrets as names and dates", async () => {
+    const { calls, run } = fake({
+      [`gh api --paginate --jq ${secrets} repos/acme/app/actions/secrets`]: "",
+      "gh api --paginate --jq .environments[].name repos/acme/app/environments": "",
+      [`gh api --paginate --jq ${secrets} repos/acme/app/environments/production/secrets`]: "",
+      [`gh api --paginate --jq ${secrets} orgs/acme/actions/secrets`]: "",
+    });
+    const answers: Record<string, string> = {
+      "repos/acme/app/actions/secrets?per_page=100": "PAYMENTS_API_KEY\t2026-01-02T00:00:00Z\n",
+      "repos/acme/app/environments?per_page=100": "production\npreview/one\n",
+      "repos/acme/app/environments/production/secrets?per_page=100": "DEPLOY_TOKEN\t2026-03-04T00:00:00Z\n",
+      "orgs/acme/actions/secrets?per_page=100": "SHARED_TOKEN\t2025-05-06T00:00:00Z\n",
+    };
+    const wrapped: Run = async (argv) => {
+      expect(isMetadataCommand(argv)).toBe(true);
+      await run(argv);
+      return answers[argv[5] ?? ""] ?? "";
+    };
+    const observed = await observe(
+      [
+        { kind: "github", scope: "acme/app", filter: "production" },
+        { kind: "github", scope: "acme" },
+      ],
+      wrapped,
+    );
+    expect(observed).toEqual([
+      { kind: "github", scope: "acme/app", name: "PAYMENTS_API_KEY", changed: "2026-01-02" },
+      { kind: "github", scope: "acme/app", name: "env:production/DEPLOY_TOKEN", changed: "2026-03-04" },
+      { kind: "github", scope: "acme", name: "SHARED_TOKEN", changed: "2025-05-06" },
+    ]);
+    expect(calls).toHaveLength(4);
+  });
+
+  test("gh is allowed only as an exact listing, never with a flag that could write", () => {
+    const ok = ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/secrets?per_page=100"];
+    expect(isMetadataCommand(ok)).toBe(true);
+    for (const argv of [
+      [...ok, "-X", "PUT"],
+      ["gh", "api", "-X", "DELETE", "--jq", secrets, "repos/acme/app/actions/secrets?per_page=100"],
+      ["gh", "api", "--paginate", "--jq", ".", "repos/acme/app/actions/secrets?per_page=100"],
+      ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/secrets/NAME?per_page=100"],
+      ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/runners?per_page=100"],
+      ["gh", "secret", "set", "NAME"],
+    ])
+      expect(isMetadataCommand(argv)).toBe(false);
+  });
+});

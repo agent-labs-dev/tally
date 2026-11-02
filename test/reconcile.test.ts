@@ -9,6 +9,7 @@ import {
   reconcile,
   staleRule,
   storeRule,
+  unregisteredRule,
 } from "../src/reconcile";
 import type { Entry } from "../src/schema";
 
@@ -335,5 +336,38 @@ describe("provider facts", () => {
       reconcile([key()], { ...context, idleDays: 90, observed: [seen({ lastUsed: "2025-12-01" })] }, [idleRule]),
     ).toEqual([]);
     expect(reconcile([key()], { ...context, observed: [seen()] }, [idleRule])).toEqual([]);
+  });
+});
+
+describe("github secrets", () => {
+  const repo = "acme/app";
+  const github = (ref: string) =>
+    entry({ locations: [{ kind: "github", ref }], expires: "none", expiresNote: "n", limit: "none" });
+
+  test("a location names a secret in a scope that holds a slash only as whole segments", () => {
+    const seen = { kind: "github", scope: "acme/app", name: "DEPLOY_TOKEN", changed: "2024-01-01" };
+    const stale = (ref: string) =>
+      reconcile([github(ref)], { ...context, staleDays: 365, observed: [seen] }, [staleRule]).length;
+    expect(stale("DEPLOY_TOKEN")).toBe(1);
+    expect(stale("acme/app/DEPLOY_TOKEN")).toBe(1);
+    expect(stale("acme/application/DEPLOY_TOKEN")).toBe(0);
+  });
+
+  test("an organization secret declared as ORG/NAME counts for this repository's workflows", () => {
+    const referenced = new Map([["SHARED_TOKEN", [".github/workflows/ci.yml"]]]);
+    expect(reconcile([github("acme/SHARED_TOKEN")], withRepo({ referenced, repo }), [unregisteredRule])).toEqual([]);
+    expect(reconcile([github("other/SHARED_TOKEN")], withRepo({ referenced, repo }), [unregisteredRule])).toHaveLength(
+      1,
+    );
+  });
+
+  test("a stored workflow secret nobody declared is reported once, by the scan", () => {
+    const referenced = new Map([["DEPLOY_TOKEN", [".github/workflows/ci.yml"]]]);
+    const observed = [{ kind: "github", scope: repo, name: "env:production/DEPLOY_TOKEN" }];
+    const findings = reconcile(
+      [],
+      withRepo({ referenced, repo, observed, sources: [{ kind: "github", scope: repo }] }),
+    );
+    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:DEPLOY_TOKEN"]);
   });
 });
