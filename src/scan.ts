@@ -70,7 +70,7 @@ export function referencedSecrets(root: string, skip: Skip = () => false): Map<s
  * Names that hold a credential by convention. Identifiers, hosts and flags (`*_ID`, `*_HOST`, `*_ENABLED`) do not
  * match. A tally file adds its own conventions in `credentialNames` and silences false matches with `ignore`.
  */
-export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIALS?)$/;
+export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|PAT|KEYSTORE|HOOK|DSN|CREDENTIALS?)$/;
 
 /** Committed templates that list the variables an app reads. A real `.env` is never opened. */
 const template = /(^|\/)(\.env\.(example|sample|template|dist)|[\w.-]+\.env\.example)$/;

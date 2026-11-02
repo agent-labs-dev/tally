@@ -78,7 +78,7 @@ keys:
 | `secretPatterns` | Extra credential regular expressions, added to the built-in guard |
 | `ignore` | Names the scan finds that are not credentials, such as ids and URLs |
 | `ignorePaths` | Globs for files both scans skip, such as test fixtures that name made-up secrets |
-| `credentialNames` | Extra regular expressions for credential variable names in env templates. Built in: names ending in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `DSN` or `CREDENTIALS` |
+| `credentialNames` | Extra regular expressions for credential variable names in env templates. Built in: names ending in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PASSPHRASE`, `PAT`, `KEYSTORE`, `HOOK`, `DSN` or `CREDENTIALS` |
 | `keys` | The entries, in reading order |
 
 An entry has these fields:
