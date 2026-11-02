@@ -3,7 +3,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useRef, useState } from "react";
 import type { Report } from "./cli";
 import type { Finding } from "./reconcile";
-import type { Entry } from "./schema";
+import { type Entry, withheld } from "./schema";
 
 const color = {
   bg: "#121113",
@@ -252,7 +252,7 @@ export function App({ initial, load, onQuit }: AppProps) {
         </span>
         <span
           fg={color.comment}
-        >{` ${report.repo ?? report.path} · ${report.today} · ${report.entries.length} keys · `}</span>
+        >{` ${withheld(report.repo ?? report.path)} · ${report.today} · ${report.entries.length} keys · `}</span>
         <span fg={action ? color.orange : color.green}>{`${action} action`}</span>
         <span fg={color.comment}>{` · ${gaps} gaps`}</span>
         {filter || typing ? <span fg={color.peach}>{`  /${filter}${typing ? "▏" : ""}`}</span> : null}

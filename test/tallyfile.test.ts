@@ -155,7 +155,7 @@ describe("loadTallyFile", () => {
 
 test("a setting written twice is an error, not a silent override", async () => {
   const path = join(temp(), ".tally.yaml");
-  writeFileSync(path, "sources:\n  - gcp: prod\nsources: []\nkeys: []\n");
+  writeFileSync(path, "sources:\n  - gcp: prod\n\"sources\": []\nkeys: []\n");
   const loaded = await loadTallyFile(path);
   expect(loaded.errors.map((error) => error.message)).toEqual(["sources is set more than once"]);
 });

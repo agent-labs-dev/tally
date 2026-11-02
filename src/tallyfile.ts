@@ -122,7 +122,7 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
     if (!settings.has(key)) errors.push({ path, message: `unknown setting ${withheld(key)}` });
   }
   // YAML lets a repeated key silently replace the first, so a second `sources:` would quietly switch the stores off.
-  const topLevel = [...text.matchAll(/^([A-Za-z_][\w-]*)\s*:/gm)].map((match) => match[1]);
+  const topLevel = [...text.matchAll(/^(["']?)([A-Za-z_][\w-]*)\1\s*:/gm)].map((match) => match[2]);
   for (const key of new Set(topLevel.filter((key, at) => topLevel.indexOf(key) !== at)))
     errors.push({ path, message: `${withheld(key ?? "")} is set more than once` });
 
