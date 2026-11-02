@@ -44,7 +44,8 @@ tally init --owner HANDLE
 ```
 
 This writes `.tally.yaml` with one draft entry per secret the workflows use, each with `service: unknown`,
-`expires: unknown` and `limit: unknown`. Then fill in the facts from the provider dashboard, and run `tally validate`
+`expires: unknown` and `limit: unknown`. On an existing file it only adds: new locations onto the entry that names the
+same secret, and new entries for the rest, so run it again after adding `sources:`. Then fill in the facts from the provider dashboard, and run `tally validate`
 and `tally check`.
 
 To declare a key that no workflow uses yet, use `tally add` with flags. It writes metadata only; there is no prompt and

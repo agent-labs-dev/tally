@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { referencedSecrets, templatedSecrets } from "../src/scan";
+import { referencedSecrets, skipping, templatedSecrets } from "../src/scan";
 
 function repository(): string {
   const root = mkdtempSync(join(tmpdir(), "tally-scan-"));
@@ -90,6 +90,11 @@ describe("templatedSecrets", () => {
       "SIGNING_SECRET",
     ]);
     expect(found?.get("SIGNING_SECRET")).toEqual(["services/web/.env.sample"]);
+  });
+
+  test("ignorePaths leaves out matching templates", () => {
+    const root = checkout({ ".env.example": "LIVE_KEY=\n", "fixtures/case/.env.example": "FAKE_SECRET=\n" });
+    expect([...(templatedSecrets(root, [], skipping(["fixtures/**"]))?.keys() ?? [])]).toEqual(["LIVE_KEY"]);
   });
 
   test("a tally file adds its own credential naming conventions", () => {

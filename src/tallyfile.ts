@@ -15,6 +15,8 @@ export interface Config {
   ignore: string[];
   /** Extra regular expressions for variable names in env templates that hold credentials, beyond the built-in ones. */
   credentialNames: string[];
+  /** Globs, relative to the repository root, for files the scans skip, such as test fixtures. */
+  ignorePaths: string[];
   /** Secret stores to read names and dates from, as `kind: scope` pairs with an optional `filter`. */
   sources: Source[];
   /** A key whose stored value has not changed in this many days is reported as stale. */
@@ -41,6 +43,7 @@ const settings = new Set([
   "secretPatterns",
   "ignore",
   "credentialNames",
+  "ignorePaths",
   "sources",
   "keys",
 ]);
@@ -72,7 +75,15 @@ function stringList(value: unknown): string[] | undefined {
 }
 
 export function freshConfig(): Config {
-  return { warnDays: 30, staleDays: 365, secretPatterns: [], ignore: [], credentialNames: [], sources: [] };
+  return {
+    warnDays: 30,
+    staleDays: 365,
+    secretPatterns: [],
+    ignore: [],
+    credentialNames: [],
+    ignorePaths: [],
+    sources: [],
+  };
 }
 
 /**
@@ -110,6 +121,10 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
   for (const key of Object.keys(record)) {
     if (!settings.has(key)) errors.push({ path, message: `unknown setting ${withheld(key)}` });
   }
+  // YAML lets a repeated key silently replace the first, so a second `sources:` would quietly switch the stores off.
+  const topLevel = [...text.matchAll(/^(["']?)([A-Za-z_][\w-]*)\1\s*:/gm)].map((match) => match[2]);
+  for (const key of new Set(topLevel.filter((key, at) => topLevel.indexOf(key) !== at)))
+    errors.push({ path, message: `${withheld(key ?? "")} is set more than once` });
 
   const warnDays = record.warnDays;
   if (warnDays !== undefined) {
@@ -153,6 +168,11 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
     });
     if (list && valid) config.credentialNames = list;
     else errors.push({ path, message: "credentialNames must be a list of regular expressions" });
+  }
+  if (record.ignorePaths !== undefined) {
+    const list = stringList(record.ignorePaths);
+    if (list) config.ignorePaths = list;
+    else errors.push({ path, message: "ignorePaths must be a list of path globs" });
   }
   // Before the entries: every one of them is checked against these patterns. The raw text is checked again too,
   // because a comment that only this file's own patterns catch never reaches a parsed entry.
@@ -204,6 +224,7 @@ export async function writeTallyFile(path: string, config: Config, entries: read
     secretPatterns: config.secretPatterns,
     ignore: config.ignore,
     credentialNames: config.credentialNames,
+    ignorePaths: config.ignorePaths,
     sources: config.sources.map(({ kind, scope, filter }) => ({ [kind]: scope, ...(filter ? { filter } : {}) })),
     keys,
   };
