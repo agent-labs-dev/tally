@@ -107,6 +107,7 @@ describe("cli", () => {
       secretPatterns: [],
       ignore: ["BUILD_ID"],
       credentialNames: [],
+      ignorePaths: [],
       sources: [],
       staleDays: 365,
       issueRepo: "owner/name",
@@ -252,7 +253,7 @@ describe("cli", () => {
     expect(result.json.schemaVersion).toBe(1);
     expect(result.json.exitCodes).toEqual({ ok: 0, error: 1, usage: 2, findings: 3 });
     expect(result.json.configFields).toBe(
-      "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, sources, keys",
+      "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
     );
   });
 });
@@ -294,11 +295,46 @@ describe("init", () => {
     expect(text).toContain("keys: []");
   });
 
-  test("refuses to overwrite an existing tally file", async () => {
-    const { config, run } = harness();
-    writeFileSync(config, "keys: []\n");
-    const result = await run(["init"]);
-    expect(result.code).toBe(1);
+  test("run again, it links stored copies to their keys and drafts only what nobody names", async () => {
+    const { root, config, run } = harness();
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    mkdirSync(join(root, "fixtures", ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "deploy.yml"), `env:\n  A: ${expression("PAYMENTS_API_KEY")}\n`);
+    writeFileSync(
+      config,
+      [
+        "ignore: [BUILD_ID]",
+        "ignorePaths: ['fixtures/**']",
+        "sources:",
+        "  - gcp: prod",
+        "keys:",
+        "  - id: payments",
+        "    service: payments",
+        "    owner: team-payments",
+        "    locations: [{ github: PAYMENTS_API_KEY }]",
+        "    expires: unknown",
+        "    limit: unknown",
+        "",
+      ].join("\n"),
+    );
+    const listing = [
+      { name: "PAYMENTS_API_KEY" },
+      { name: "MAIL_TOKEN" },
+      { name: "DATABASE_URL" },
+      { name: "BUILD_ID" },
+    ];
+    const store: Run = async (argv) => JSON.stringify(argv.includes("versions") ? [] : listing);
+
+    const result = await run(["init", "--owner", "team-mail"], { run: store });
+    expect(result.code).toBe(0);
+    expect(result.json.linked).toEqual([{ id: "payments", location: { kind: "gcp", ref: "prod/PAYMENTS_API_KEY" } }]);
+    // A URL is not credential-shaped and BUILD_ID is ignored, so neither becomes a key.
+    expect(result.json.drafted).toEqual([{ id: "mail-token", secret: "MAIL_TOKEN" }]);
+
+    const loaded = await loadTallyFile(config);
+    expect(loaded.config.ignorePaths).toEqual(["fixtures/**"]);
+    expect(loaded.entries.find((entry) => entry.id === "payments")?.locations).toHaveLength(2);
+    expect((await run(["init", "--offline"])).json).toMatchObject({ drafted: [], linked: [] });
   });
 });
 

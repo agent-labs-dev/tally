@@ -153,6 +153,13 @@ describe("loadTallyFile", () => {
   });
 });
 
+test("a setting written twice is an error, not a silent override", async () => {
+  const path = join(temp(), ".tally.yaml");
+  writeFileSync(path, "sources:\n  - gcp: prod\nsources: []\nkeys: []\n");
+  const loaded = await loadTallyFile(path);
+  expect(loaded.errors.map((error) => error.message)).toEqual(["sources is set more than once"]);
+});
+
 describe("writeTallyFile", () => {
   test("round-trips settings and every entry", async () => {
     const root = temp();
@@ -162,6 +169,7 @@ describe("writeTallyFile", () => {
       secretPatterns: [],
       ignore: ["BUILD_ID"],
       credentialNames: [],
+      ignorePaths: [],
       sources: [],
       staleDays: 365,
       issueRepo: "owner/name",
@@ -182,7 +190,15 @@ describe("writeTallyFile", () => {
     await expect(
       writeTallyFile(
         path,
-        { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [], sources: [], staleDays: 365 },
+        {
+          warnDays: 30,
+          secretPatterns: [],
+          ignore: [],
+          credentialNames: [],
+          ignorePaths: [],
+          sources: [],
+          staleDays: 365,
+        },
         [entry(), entry()],
       ),
     ).rejects.toThrow("duplicate id");
@@ -192,7 +208,15 @@ describe("writeTallyFile", () => {
     const path = join(temp(), "nested", "dir", "tally.yaml");
     await writeTallyFile(
       path,
-      { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [], sources: [], staleDays: 365 },
+      {
+        warnDays: 30,
+        secretPatterns: [],
+        ignore: [],
+        credentialNames: [],
+        ignorePaths: [],
+        sources: [],
+        staleDays: 365,
+      },
       [],
     );
     expect((await loadTallyFile(path)).errors).toEqual([]);

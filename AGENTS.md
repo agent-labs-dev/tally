@@ -31,6 +31,8 @@ gitleaks over the workflows and the full history.
 - `src/stores.ts`: read-only store readers (gcp, aws, azure) and the listing commands, the only ones they may run
 - `src/reconcile.ts`: `Rule` functions and the findings they return
 - `src/issues.ts`: the desired issues, and the `gh` calls that sync them
+- `src/draft.ts`: what `init` adds to an existing file: new locations on the entry naming a secret, new entries otherwise
+- `src/ui.tsx`: `tally ui`, the OpenTUI React view, loaded only when that command runs
 - `src/cli.ts`: argument parsing, output, exit codes
 - `action.yml`: the composite action a repository calls to run `issues sync`
 - `.tally.yaml`: this repository's keys, which are none

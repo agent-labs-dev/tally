@@ -7,6 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-02
+
+- **Terminal view.** `tally ui` lists keys by urgency with the selected key's locations and findings beside it, and a
+  second list of every finding. It filters, sorts and reloads in place.
+- **`init` extends an existing file.** Running it again adds store copies and new locations to the entry that already
+  names that secret, and drafts entries only for secrets nobody declared. A store name that is not credential-shaped is
+  never drafted.
+- **`ignorePaths`.** Globs for files the workflow and env template scans skip, such as test fixtures.
+- **Repeated settings are errors.** A top-level setting written twice in `.tally.yaml` used to let the last one win
+  silently; it is now reported by `validate` and every other command.
+
 ## [0.1.0] - 2026-11-02
 
 First release.

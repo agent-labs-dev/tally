@@ -162,7 +162,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
   const actions: Action[] = [];
   const writes: Write[] = [];
   const usedLabels = new Map<string, string>();
-  const useLabels = (want: Desired, names: readonly string[]) => {
+  const addLabels = (want: Desired, names: readonly string[]) => {
     for (const name of names) usedLabels.set(name, name === label ? colours.base : colours[want.severity]);
   };
 
@@ -170,7 +170,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
     const existing = byMarker.get(want.marker);
     if (!existing) {
       actions.push({ do: "create", marker: want.marker, title: want.title });
-      useLabels(want, want.labels);
+      addLabels(want, want.labels);
       const call = [
         "issue",
         "create",
@@ -192,7 +192,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
     // The body names the owner, so an owner change always lands here and the new owner is added.
     const assigned = (existing.assignees ?? []).some((item) => item.login.toLowerCase() === want.assignee);
     actions.push({ do: "edit", marker: want.marker, number: existing.number, title: want.title });
-    useLabels(want, missing);
+    addLabels(want, missing);
     writes.push({
       args: [
         "issue",

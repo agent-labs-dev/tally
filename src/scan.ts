@@ -1,6 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+/** Whether a repository-relative path is one the scans leave out. */
+export type Skip = (file: string) => boolean;
+
+/** `ignorePaths` as a test: a file is skipped when any glob matches it. */
+export function skipping(globs: readonly string[]): Skip {
+  const matchers = globs.map((glob) => new Bun.Glob(glob));
+  return (file) => matchers.some((matcher) => matcher.match(file));
+}
+
 const expression = /\$\{\{([\s\S]*?)\}\}/g;
 const dotted = /\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)/g;
 const indexed = /\bsecrets\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g;
@@ -22,13 +31,14 @@ function strings(value: unknown): string[] {
  * workflows are the only place to look. A workflow that is not valid YAML cannot run, so it references nothing.
  * `undefined` means there is no `.github/workflows` directory, so the root is not a checkout with anything to compare.
  */
-export function referencedSecrets(root: string): Map<string, string[]> | undefined {
+export function referencedSecrets(root: string, skip: Skip = () => false): Map<string, string[]> | undefined {
   const workflows = join(root, ".github", "workflows");
   if (!existsSync(workflows)) return undefined;
   const files = readdirSync(workflows)
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
     .sort()
-    .map((name) => `.github/workflows/${name}`);
+    .map((name) => `.github/workflows/${name}`)
+    .filter((file) => !skip(file));
 
   const referenced = new Map<string, string[]>();
   for (const file of files) {
@@ -71,14 +81,18 @@ const assignment = /^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
  * Credential-named variables the code reads, from the env templates git tracks, mapped to the templates that list
  * them. Only the name left of `=` is read, never the value. `undefined` means the root is not a git checkout.
  */
-export function templatedSecrets(root: string, extra: readonly string[] = []): Map<string, string[]> | undefined {
+export function templatedSecrets(
+  root: string,
+  extra: readonly string[] = [],
+  skip: Skip = () => false,
+): Map<string, string[]> | undefined {
   const listed = Bun.spawnSync(["git", "-C", root, "ls-files", "-z"], { stdout: "pipe", stderr: "ignore" });
   if (listed.exitCode !== 0) return undefined;
   const patterns = [credentialName, ...extra.map((pattern) => new RegExp(pattern))];
   const files = listed.stdout
     .toString()
     .split("\0")
-    .filter((file) => template.test(file))
+    .filter((file) => template.test(file) && !skip(file))
     .sort();
 
   const found = new Map<string, string[]>();

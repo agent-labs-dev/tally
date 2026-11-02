@@ -84,7 +84,7 @@ function githubRefs(entry: Entry): string[] {
  * (`projects/SCOPE/secrets/NAME`, or a secret URL) all match, names may hold slashes, and a same name in another
  * scope does not. Names compare case-insensitively, so one key's env name and its stored name match in any case.
  */
-function isStored(location: Location, observation: Observation): boolean {
+export function isStored(location: Location, observation: Observation): boolean {
   if (location.kind !== observation.kind) return false;
   const ref = storePath(location.ref).toUpperCase();
   const name = observation.name.toUpperCase();

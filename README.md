@@ -29,6 +29,9 @@ Agents are the main users. Output is JSON when asked for it, and the exit codes 
    becomes an entry with `service: unknown`, `expires: unknown` and `limit: unknown`. Only names are read: never a
    value, and never a real `.env`.
 
+   Run it again after adding `sources:` or new secrets. It keeps every existing entry, adds a store copy or a new
+   location to the one entry that already names that secret, and drafts entries only for secrets nobody declared.
+
 2. Fill in the facts. Look each key up in the provider's dashboard and set `service`, `owner`, `locations`, `expires`
    and `limit`. If the provider sets no expiry, write `none` and say why in `expiresNote`.
 
@@ -73,6 +76,7 @@ keys:
 | `issueRepo` | Where `issues sync` files issues. Default: `GITHUB_REPOSITORY`, else gh infers the repository from the cwd |
 | `secretPatterns` | Extra credential regular expressions, added to the built-in guard |
 | `ignore` | Names the scan finds that are not credentials, such as ids and URLs |
+| `ignorePaths` | Globs for files both scans skip, such as test fixtures that name made-up secrets |
 | `credentialNames` | Extra regular expressions for credential variable names in env templates. Built in: names ending in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `DSN` or `CREDENTIALS` |
 | `keys` | The entries, in reading order |
 
@@ -197,7 +201,8 @@ In CI, log in to the store before the tally step, for example with workload iden
 ## Commands
 
 ```sh
-tally init [--owner HANDLE]        # write .tally.yaml, drafted from the repository's workflows
+tally init [--owner HANDLE]        # draft or extend .tally.yaml from workflows, env templates and stores
+tally ui                           # browse keys and findings in the terminal
 tally check [--today DATE]         # expiring keys, missing facts and scan findings
 tally notify [--today DATE]        # check, then a desktop notification per action finding
 tally list [--group G] [--service S]
@@ -221,7 +226,11 @@ tally add payments-api \
 
 `--expires` and `--limit` default to `unknown`, which `check` reports as a gap. `tally rotated` clears the old
 `expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. Global flags are
-`--config PATH` and `--json`.
+`--config PATH` and `--json`. `--offline` skips the secret stores in `check`, `notify`, `init` and `ui`.
+
+`tally ui` lists every key with its most urgent finding first, and the facts and findings of the selected key beside
+it. `tab` switches to the list of findings, `/` filters, `s` changes the sort, `r` reloads and `q` quits. It needs a
+terminal and does not take `--json`.
 
 ## Daily issues
 

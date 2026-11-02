@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import packageJson from "../package.json";
+import { draft } from "./draft";
 import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
 import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
-import { referencedSecrets, templatedSecrets } from "./scan";
+import { referencedSecrets, skipping, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
 import { observe, type Run, runCommand } from "./stores";
 import {
@@ -21,9 +22,13 @@ export const exit = { ok: 0, error: 1, usage: 2, findings: 3 } as const;
 const help = `tally tracks a repository's API keys: owner, where each one is stored, its limit and its expiry. It never reads, stores or prints a key.
 Output is JSON when stdout is not a terminal or with --json.
 
-  tally init [--owner HANDLE]   write .tally.yaml with a draft entry per secret the workflows and env templates name
+  tally init [--owner HANDLE] [--offline]
+                                 write .tally.yaml, or add to it: a draft entry per secret the workflows, env templates
+                                 and stores hold that no key names, and each stored copy of a key as a location
   tally check [--today YYYY-MM-DD] [--offline]
                                  report expiring, stale, undeclared and missing keys and missing facts, action findings exit 3
+  tally ui [--today YYYY-MM-DD] [--offline]
+                                 browse keys and findings in the terminal; r reloads, q quits
   tally notify [--today YYYY-MM-DD] [--offline]
                                  run check, then send a desktop notification per action finding
   tally list [--group G] [--service S]
@@ -90,6 +95,18 @@ interface Result {
   value: unknown;
   text?: string;
   code?: number;
+  /** The command drew its own screen, so nothing is printed after it. */
+  silent?: boolean;
+}
+
+/** What `check` sees, for the interactive view: the file, its keys and every finding about them. */
+export interface Report {
+  path: string;
+  repo?: string;
+  today: string;
+  warnDays: number;
+  entries: Entry[];
+  findings: Finding[];
 }
 
 function usageDate(flag: string, value: string): string {
@@ -183,16 +200,34 @@ async function buildContext(
 ): Promise<Context> {
   const root = repositoryRoot(dirname(loaded.path));
   const sources = flags.offline ? [] : loaded.config.sources;
+  const skip = skipping(loaded.config.ignorePaths);
   return {
     today: flags.today ?? todayUtc(),
     warnDays: loaded.config.warnDays,
     staleDays: loaded.config.staleDays,
-    referenced: referencedSecrets(root),
-    templated: templatedSecrets(root, loaded.config.credentialNames),
+    referenced: referencedSecrets(root, skip),
+    templated: templatedSecrets(root, loaded.config.credentialNames, skip),
     ignore: loaded.config.ignore,
     repo: scannedRepo(root, env),
     sources,
     observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand) : undefined,
+  };
+}
+
+async function report(
+  flags: Flags,
+  loaded: Awaited<ReturnType<typeof loadAll>>,
+  env: Record<string, string | undefined>,
+  io: IO,
+): Promise<Report> {
+  const context = await buildContext(flags, loaded, env, io);
+  return {
+    path: loaded.path,
+    repo: context.repo,
+    today: context.today,
+    warnDays: context.warnDays,
+    entries: loaded.entries,
+    findings: reconcile(loaded.entries, context),
   };
 }
 
@@ -231,21 +266,6 @@ function entryLine(entry: Entry): string {
   return `${entry.id}  ${entry.service}  ${entry.group ?? "-"}  ${entry.owner}  expires ${entry.expires}  limit ${entry.limit}`;
 }
 
-/** A secret name turned into an id: lowercase, underscores to hyphens, and nothing a slug cannot hold. */
-function draftId(secret: string, used: Set<string>): string {
-  const base =
-    secret
-      .toLowerCase()
-      .replaceAll("_", "-")
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/-{2,}/g, "-")
-      .replace(/^-+|-+$/g, "") || "key";
-  let id = base;
-  for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
-  used.add(id);
-  return id;
-}
-
 /** A desktop notification, only when the desktop has a notifier on PATH. */
 function notifierOnPath(): ((message: string) => Promise<void>) | undefined {
   if (!Bun.which("notify-send")) return undefined;
@@ -264,7 +284,7 @@ function schema() {
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
-    configFields: "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, sources, keys",
+    configFields: "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
   };
 }
 
@@ -280,33 +300,23 @@ async function dispatch(
     case "init": {
       expectNoArgs(rest, command);
       const path = configPath(flags, env, cwd);
-      if (existsSync(path)) throw new Error(`${withheld(path)} already exists`);
-      const root = repositoryRoot(dirname(path));
-      const workflows = referencedSecrets(root) ?? new Map<string, string[]>();
-      const templates = templatedSecrets(root) ?? new Map<string, string[]>();
-      const used = new Set<string>();
-      const drafted = [...new Set([...workflows.keys(), ...templates.keys()])]
-        .sort()
-        .map((secret) => ({ secret, id: draftId(secret, used) }));
-      // A workflow secret is an Actions secret here. A template only says the code reads the variable, so `env` stands
-      // in for its store until someone records the real one.
-      const entries: Entry[] = drafted.map(({ id, secret }) => ({
-        id,
-        service: "unknown",
-        owner: flags.owner ?? "unknown",
-        locations: [
-          ...(workflows.has(secret) ? [{ kind: "github", ref: secret }] : []),
-          ...(templates.has(secret) ? [{ kind: "env", ref: secret }] : []),
-        ],
-        expires: "unknown",
-        limit: "unknown",
-      }));
-      await writeTallyFile(path, freshConfig(), entries);
+      const loaded = existsSync(path)
+        ? { path, ...(await loadTallyFile(path)) }
+        : { path, config: freshConfig(), entries: [], errors: [] };
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const context = await buildContext(flags, loaded, env, io);
+      const plan = draft(loaded.entries, context, flags.owner ?? "unknown");
+      await writeTallyFile(path, loaded.config, plan.entries);
+      const lines = [
+        ...plan.drafted.map(({ id, secret }) => `  drafted ${id}  ${secret}`),
+        ...plan.linked.map(({ id, location }) => `  linked  ${id}  ${location.kind}: ${location.ref}`),
+        ...plan.unsure.map((name) => `  unsure  ${name} matches more than one key, so add its location by hand`),
+      ];
       const text =
-        drafted.length === 0
-          ? `wrote ${withheld(path)} with no keys, because no workflow or env template names a secret yet`
-          : [`wrote ${withheld(path)}`, ...drafted.map(({ id, secret }) => `  ${id}  ${secret}`)].join("\n");
-      return { value: { path, drafted }, text };
+        lines.length === 0
+          ? `${withheld(path)} already names every key the code and stores hold`
+          : [`wrote ${withheld(path)}`, ...lines].join("\n");
+      return { value: { path, drafted: plan.drafted, linked: plan.linked, unsure: plan.unsure }, text };
     }
     case "check":
     case "notify": {
@@ -427,6 +437,24 @@ async function dispatch(
         .join("\n");
       return { value: { repo: repo ?? null, dryRun: flags.dryRun, actions }, text: text || "no changes" };
     }
+    case "ui": {
+      expectNoArgs(rest, command);
+      if (!(io.isTTY ?? process.stdout.isTTY) || flags.json)
+        throw new UsageError("tally ui needs a terminal; use tally check --json");
+      // The first read happens before the screen is taken, so a broken file is reported like any other command's.
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const first = await report(flags, loaded, env, io);
+      const reload = async () => {
+        const again = await loadAll(flags, env, cwd);
+        if (again.errors.length > 0) throw new Error(again.errors.map((error) => error.message).join("; "));
+        return report(flags, again, env, io);
+      };
+      // Loaded only here, so every other command, and the CI action, runs without the UI's dependencies installed.
+      const { showUi } = await import("./ui");
+      await showUi(first, reload);
+      return { value: null, silent: true };
+    }
     case "schema":
       expectNoArgs(rest, command);
       return { value: schema(), text: JSON.stringify(schema(), null, 2) };
@@ -454,12 +482,14 @@ export async function main(args: string[], io: IO = {}): Promise<number> {
     const [command, ...rest] = flags.positional;
     if (flags.dryRun && command !== "issues") throw new UsageError("--dry-run only applies to issues sync");
     // A sync that skipped the stores would close their issues as if the findings had cleared.
-    if (flags.offline && command !== "check" && command !== "notify")
-      throw new UsageError("--offline only applies to check and notify");
+    if (flags.offline && !["check", "notify", "init", "ui"].includes(command ?? ""))
+      throw new UsageError("--offline only applies to check, notify, init and ui");
     if (command === undefined)
-      throw new UsageError("usage: tally init|check|notify|list|validate|add|rotated|issues|schema, or tally --help");
+      throw new UsageError(
+        "usage: tally init|check|ui|notify|list|validate|add|rotated|issues|schema, or tally --help",
+      );
     const result = await dispatch(flags, command, rest, io, env, cwd);
-    write(json ? JSON.stringify(result.value) : (result.text ?? JSON.stringify(result.value)));
+    if (!result.silent) write(json ? JSON.stringify(result.value) : (result.text ?? JSON.stringify(result.value)));
     return result.code ?? exit.ok;
   } catch (error) {
     const usage = error instanceof UsageError;
