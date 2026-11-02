@@ -250,9 +250,22 @@ describe("store rules", () => {
     );
     // The staging ref is not reported: that scope was never read.
     expect(findings.map((finding) => finding.id).sort()).toEqual([
-      "missing:payments-api:gcp:prod/GONE_KEY",
-      "unregistered:gcp:prod:PAYMENTS_API_KEY",
+      "missing:payments-api:gcp:prod/gone_key",
+      "unregistered:gcp:prod:payments_api_key",
     ]);
+  });
+
+  test("a filtered source never makes a declared secret missing", () => {
+    const entry = stored({
+      locations: [
+        { kind: "gcp", ref: "PROD/GONE_KEY" },
+        { kind: "gcp", ref: "GONE_KEY" },
+      ],
+    });
+    const filtered = [{ kind: "gcp", scope: "prod", filter: "labels.app=web" }];
+    expect(reconcile([entry], { ...context, sources: filtered, observed: [] }, [storeRule])).toEqual([]);
+    const ids = reconcile([entry], { ...context, sources, observed: [] }, [storeRule]).map((finding) => finding.id);
+    expect(ids.sort()).toEqual(["missing:payments-api:gcp:gone_key", "missing:payments-api:gcp:prod/gone_key"]);
   });
 
   test("a full store path and a bare name both match, and a same name in another scope does not", () => {
@@ -263,6 +276,6 @@ describe("store rules", () => {
       { ...context, sources: [...sources, { kind: "gcp", scope: "staging" }], observed },
       [storeRule],
     );
-    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:gcp:staging:PAYMENTS_API_KEY"]);
+    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:gcp:staging:payments_api_key"]);
   });
 });

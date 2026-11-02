@@ -167,14 +167,15 @@ sources:
 | `aws` | region | `aws secretsmanager list-secrets` | last rotation, else last change |
 | `azure` | vault name | `az keyvault secret list` | last update |
 
-tally runs each vendor's CLI with the login it already has. It only lists names and dates, and it refuses to run a
-command that prints a value (`versions access`, `get-secret-value`, `secret show`). Give it a role that cannot read
+tally runs each vendor's CLI with the login it already has. It runs only the listing commands above and refuses
+anything else, so it never prints, sets or backs up a value. Give it a role that cannot read
 values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets` on AWS, and the `list` secret
 permission on Azure.
 
 A location matches a stored secret when its kind is the source kind and its ref is the name, `SCOPE/NAME`, or the
 store's full path (`projects/SCOPE/secrets/NAME`). An expiry the store reports fills in an entry whose `expires` is
-`unknown`. A store that cannot be read fails the run, so a check never passes on a partial view. `tally check
+`unknown`. A filtered source lists only part of its store, so it never reports a declared secret as `missing`. A
+store that cannot be read fails the run, so a check never passes on a partial view. `tally check
 --offline` skips the stores; `issues sync` never does, because skipping them would close their issues.
 
 In CI, log in to the store before the tally step, for example with workload identity on GCP:
@@ -288,7 +289,7 @@ Exit code 3 from `notify` means something needs rotating. A timer ignores it; a 
 
 - New providers, groups and secret stores are new entries or locations. There is no list of them in the code.
 - Reading a new kind of store is one more `Store` in `src/stores.ts`: a scope, and a `list` that turns the vendor
-  CLI's listing into names and dates. Add any value-printing subcommand it has to `valueCommands`.
+  CLI's listing into names and dates, plus its listing command in `metadataCommands`, the only commands tally runs.
 - New checks are `Rule` functions in `src/reconcile.ts`. A rule takes every entry plus the context and returns
   findings. It never writes. The default rules run expiry, limit, the scan checks, staleness and the store
   comparison.

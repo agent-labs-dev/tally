@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { observe, type Run, runCommand, stores, valueCommands } from "../src/stores";
+import { isMetadataCommand, observe, type Run, runCommand, stores } from "../src/stores";
 
 /** A fake store CLI: answers by the command's first words and records every call. */
 function fake(answers: Record<string, unknown>) {
@@ -65,9 +65,9 @@ describe("store readers", () => {
     ]);
   });
 
-  test("no reader ever builds a command that prints a secret value", async () => {
+  test("every reader command is an allowed listing", async () => {
     const run: Run = async (argv) => {
-      for (const banned of valueCommands) expect(banned.every((word) => argv.includes(word))).toBe(false);
+      expect(isMetadataCommand(argv)).toBe(true);
       if (argv.includes("versions")) return "[]";
       if (argv[0] === "aws") return JSON.stringify({ SecretList: [{ Name: "KEY" }] });
       return JSON.stringify([{ name: "KEY", id: "https://vault.example/secrets/KEY" }]);
@@ -75,7 +75,25 @@ describe("store readers", () => {
     for (const kind of Object.keys(stores)) await observe([{ kind, scope: "scope", filter: "f" }], run);
   });
 
-  test("runCommand refuses a value command before running anything", async () => {
-    await expect(runCommand(["gcloud", "secrets", "versions", "access", "latest"])).rejects.toThrow("refusing");
+  test("runCommand refuses anything but a listing before running it", async () => {
+    for (const argv of [
+      ["gcloud", "secrets", "versions", "access", "latest"],
+      ["aws", "secretsmanager", "get-random-password"],
+      ["az", "keyvault", "secret", "backup"],
+      ["gcloud", "--project=p", "secrets", "list"],
+    ])
+      await expect(runCommand(argv)).rejects.toThrow("refusing");
+  });
+
+  test("one secret listed twice in different case is one observation", async () => {
+    const run: Run = async () => JSON.stringify({ SecretList: [{ Name: "mail" }] });
+    const observed = await observe(
+      [
+        { kind: "aws", scope: "eu-west-1" },
+        { kind: "aws", scope: "EU-WEST-1" },
+      ],
+      run,
+    );
+    expect(observed).toHaveLength(1);
   });
 });

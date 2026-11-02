@@ -1,5 +1,5 @@
 import type { Entry, Location } from "./schema";
-import type { Observation, Source } from "./stores";
+import { type Observation, observationKey, type Source } from "./stores";
 
 /**
  * `action` findings each get their own issue and make `check` exit 3.
@@ -238,7 +238,7 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
     if (locations.some(({ location }) => isStored(location, observation))) continue;
     const where = `${observation.kind}: ${observation.scope}`;
     findings.push({
-      id: `unregistered:${observation.kind}:${observation.scope}:${observation.name}`,
+      id: `unregistered:${observationKey(observation)}`,
       kind: "unregistered",
       severity: "action",
       key: observation.name,
@@ -246,17 +246,22 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
       detail: `Declare it with a \`${observation.kind}: ${observation.scope}/${observation.name}\` location, or list it under \`ignore\`.`,
     });
   }
-  const read = new Set(sources.map((source) => source.kind));
   for (const { entry, location } of locations) {
-    if (!read.has(location.kind)) continue;
+    const ofKind = sources.filter((source) => source.kind === location.kind);
+    if (!ofKind.length) continue;
     if (observed.some((observation) => isStored(location, observation))) continue;
-    // Missing only when that is certain: the ref names a scope that was read, or has no path at all. A ref with a
-    // path naming no read scope may be another scope's secret, or a name that holds a slash.
-    const segments = location.ref.split("/");
-    const scopes = sources.filter((source) => source.kind === location.kind).map((source) => source.scope);
-    if (segments.length > 1 && !scopes.some((scope) => segments.slice(0, -1).includes(scope))) continue;
+    // Missing only when that is certain. A filtered source lists part of its store, so it proves nothing is gone. A
+    // bare name needs every source of its kind read whole; a ref with a path needs a scope it names read whole, since
+    // without one it may be another scope's secret or a name that holds a slash.
+    const segments = location.ref.toLowerCase().split("/");
+    const whole = ofKind.filter((source) => !source.filter).map((source) => source.scope.toLowerCase());
+    const certain =
+      segments.length === 1
+        ? whole.length === ofKind.length
+        : whole.some((scope) => segments.slice(0, -1).includes(scope));
+    if (!certain) continue;
     findings.push({
-      id: `missing:${entry.id}:${location.kind}:${location.ref}`,
+      id: `missing:${entry.id}:${location.kind}:${location.ref.toLowerCase()}`,
       kind: "missing",
       severity: "action",
       key: entry.id,

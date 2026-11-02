@@ -1,7 +1,7 @@
 /**
  * Read-only metadata from secret stores, through each vendor's own CLI and the login it already has. A store reader
- * asks for names and dates only: it never calls a command that returns a secret value, and `valueCommands` is the
- * test that holds every reader to that. A new store is one more `Store` in `stores`, with no other code change.
+ * asks for names and dates only: `runCommand` runs nothing outside `metadataCommands`, so no reader can call a
+ * command that prints, sets or backs up a value. A new store is one more `Store` in `stores`, with no other code change.
  */
 
 /** One `kind: scope` line under `sources:` in a tally file, such as `gcp: my-project` or `aws: eu-west-1`. */
@@ -31,14 +31,21 @@ export interface Store {
   list(source: Source, run: Run): Promise<Observation[]>;
 }
 
-/** Subcommands that print a secret value. No reader may build a command containing one of these. */
-export const valueCommands = [
-  ["secrets", "versions", "access"],
-  ["secretsmanager", "get-secret-value"],
-  ["secretsmanager", "batch-get-secret-value"],
-  ["keyvault", "secret", "show"],
-  ["keyvault", "secret", "download"],
+/**
+ * The only commands a reader may run: listings that print names and dates. Anything else, including every command
+ * that prints, sets or backs up a value, is refused by `runCommand` before it starts.
+ */
+export const metadataCommands = [
+  ["gcloud", "secrets", "list"],
+  ["gcloud", "secrets", "versions", "list"],
+  ["aws", "secretsmanager", "list-secrets"],
+  ["az", "keyvault", "secret", "list"],
 ];
+
+/** Whether argv starts with one of those listings. Each CLI takes its subcommand from these leading words. */
+export function isMetadataCommand(argv: readonly string[]): boolean {
+  return metadataCommands.some((words) => words.every((word, at) => argv[at] === word));
+}
 
 function day(value: unknown): string | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
@@ -114,10 +121,8 @@ const aws: Store = {
         "aws",
         "secretsmanager",
         "list-secrets",
-        "--region",
-        source.scope,
-        "--output",
-        "json",
+        `--region=${source.scope}`,
+        "--output=json",
         ...(source.filter ? ["--filters", `Key=name,Values=${source.filter}`] : []),
       ]),
     ) as { SecretList?: Record<string, unknown>[] };
@@ -137,7 +142,7 @@ const azure: Store = {
   scope: "vault name",
   async list(source, run) {
     const listing = json(
-      await run(["az", "keyvault", "secret", "list", "--vault-name", source.scope, "--output", "json"]),
+      await run(["az", "keyvault", "secret", "list", `--vault-name=${source.scope}`, "--output=json"]),
     ) as { id: string; attributes?: { updated?: string; expires?: string } }[];
     return listing.map((secret) => ({
       kind: "azure",
@@ -151,21 +156,28 @@ const azure: Store = {
 
 export const stores: Record<string, Store> = { gcp, aws, azure };
 
-/** Every source's observations. A store that fails stops the run, so a check never passes on a partial view. */
+/** The same secret in any letter case, so one secret listed twice is one observation and one finding id. */
+export function observationKey({ kind, scope, name }: Observation): string {
+  return `${kind}:${scope}:${name}`.toLowerCase();
+}
+
+/**
+ * Every source's observations, each secret once. A store that fails stops the run, so a check never passes on a
+ * partial view.
+ */
 export async function observe(sources: readonly Source[], run: Run): Promise<Observation[]> {
-  const all: Observation[] = [];
+  const all = new Map<string, Observation>();
   for (const source of sources) {
     const store = stores[source.kind];
     if (!store) throw new Error(`no reader for source kind ${source.kind}`);
-    all.push(...(await store.list(source, run)));
+    for (const observation of await store.list(source, run)) all.set(observationKey(observation), observation);
   }
-  return all;
+  return [...all.values()];
 }
 
 /** Runs a store CLI. Its stderr is not echoed, because it can quote whatever the command touched. */
 export const runCommand: Run = async (argv) => {
-  for (const banned of valueCommands)
-    if (banned.every((word) => argv.includes(word))) throw new Error(`refusing to run a value command: ${argv[0]}`);
+  if (!isMetadataCommand(argv)) throw new Error(`refusing to run ${argv[0]}: only secret listings are allowed`);
   const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
   const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   if (code !== 0) throw new Error(`${argv.slice(0, 3).join(" ")} failed with exit ${code}; check its login and access`);

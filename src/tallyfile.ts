@@ -57,6 +57,9 @@ function parseSources(value: unknown): Source[] | string {
     const pairs = Object.entries(rest);
     const [kind, scope] = pairs[0] ?? [];
     if (pairs.length !== 1 || !kind || !(kind in stores) || typeof scope !== "string" || !scope) return usage;
+    // A project, region or vault name: never a flag, a path or anything with spaces.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(scope))
+      return `${kind} scope ${scope} must be a plain ${stores[kind]?.scope}`;
     if (filter !== undefined && (typeof filter !== "string" || !filter)) return "a source filter must be text";
     sources.push({ kind, scope, ...(filter ? { filter } : {}) });
   }
