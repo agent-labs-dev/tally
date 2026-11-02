@@ -73,7 +73,7 @@ export function referencedSecrets(root: string, skip: Skip = () => false): Map<s
 export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|PAT|KEYSTORE|HOOK|DSN|CREDENTIALS?)$/;
 
 /** Committed templates that list the variables an app reads. A real `.env` is never opened. */
-const template = /(^|\/)(\.env\.(example|sample|template|dist)|[\w.-]+\.env\.example)$/;
+const template = /(^|\/)(\.?env\.(example|sample|template|dist)|[\w.-]+\.env\.example|[\w.-]+\.example\.env)$/;
 // A commented-out line is an optional key the template still documents, so it counts too.
 const assignment = /^\s*(?:#\s*)?(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
 

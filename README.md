@@ -25,7 +25,8 @@ Agents are the main users. Output is JSON when asked for it, and the exit codes 
    ```
 
    Every `${{ secrets.NAME }}` in `.github/workflows` and every credential-named variable in a tracked env template
-   (`.env.example`, `.env.sample`, `.env.template`), including a commented-out `# NAME=` line for an optional key,
+   (`.env.example`, `.env.sample`, `.env.template`, `env.example`, `NAME.env.example`, `NAME.example.env`), including
+   a commented-out `# NAME=` line for an optional key,
    becomes an entry with `service: unknown`, `expires: unknown` and `limit: unknown`. Only names are read: never a
    value, and never a real `.env`.
 
