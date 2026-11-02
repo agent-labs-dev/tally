@@ -222,7 +222,7 @@ sources:
 | `cloudflare` | `TALLY_CLOUDFLARE_TOKEN_READER` | A custom token with only API Tokens Read (user) or Account API Tokens Read | expiry, last use |
 | `openrouter` | `TALLY_OPENROUTER_MANAGEMENT_KEY` | A management key, scoped to one workspace where possible | expiry, spend limit, last use |
 | `anthropic` | `TALLY_ANTHROPIC_ADMIN_KEY` | An Admin API key | expiry |
-| `openai` | `TALLY_OPENAI_ADMIN_KEY` | An admin key | last use |
+| `openai` | `TALLY_OPENAI_ADMIN_KEY` | An admin key | expiry, last use |
 
 Only Cloudflare offers a token that can read and do nothing else. The others can also create and revoke keys, so give
 them the shortest expiry the provider allows, declare each one in `.tally.yaml` so tally warns before it expires, and
@@ -232,7 +232,7 @@ The token is read in one place and sent only to that provider's own API host. Th
 nothing else, only to the provider's key or project listing paths, refuses redirects, stops after 20 seconds and
 10 MB, and reports a failure by HTTP status alone, never the response. Readers keep the key's name, dates, limit and
 last use, and drop everything else the provider returns, including partial key hints. A location for a provider key
-is `KIND: LABEL/NAME`, such as `openrouter: team/app`, or `openai: org/PROJECT/NAME`. Provider key names are free
+is `KIND: LABEL/NAME`, such as `openrouter: team/app`, or `openai: org/PROJECT_ID/NAME`. Provider key names are free
 text, so `init` links one onto an entry only when an entry already names it, and never drafts one.
 
 In CI, keep the admin tokens in a GitHub environment that only the default branch can use, so no pull request can

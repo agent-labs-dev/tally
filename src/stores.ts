@@ -192,6 +192,17 @@ function pageLimit(kind: string): never {
   throw new Error(`${kind} listed more than ${maxPages} pages; narrow it with a filter`);
 }
 
+/**
+ * The cursor for the next page, or undefined on the last one. A listing that says there is more but gives no cursor
+ * fails, because stopping there would report every later key as missing.
+ */
+function nextCursor(kind: string, body: { has_more?: unknown; last_id?: unknown }): string | undefined {
+  if (body.has_more !== true) return undefined;
+  if (typeof body.last_id !== "string" || !body.last_id)
+    throw new Error(`${kind} said there were more keys but gave no cursor`);
+  return body.last_id;
+}
+
 /** A provider expiry: a date, or `none` when the provider says the key never expires. */
 function expiry(value: unknown): string | undefined {
   return value === null ? "none" : day(value);
@@ -238,16 +249,16 @@ const anthropic: Store = {
             changed: day(key.created_at),
             expires: expiry(key.expires_at),
           });
-      if (body.has_more !== true || typeof body.last_id !== "string") return observations;
-      after = body.last_id;
+      after = nextCursor("anthropic", body);
+      if (!after) return observations;
     }
     return pageLimit("anthropic");
   },
 };
 
 /**
- * OpenAI Admin API: `openai: LABEL`, listing the API keys of every active project as `PROJECT/KEY`. `filter` is a
- * project id. OpenAI reports no key expiry, so expiry stays whatever the entry records.
+ * OpenAI Admin API: `openai: LABEL`, listing the API keys of every active project as `PROJECT_ID/KEY`, since a project
+ * name can be empty or change. `filter` is a project id.
  */
 const openai: Store = {
   scope: "label for the organization",
@@ -258,18 +269,18 @@ const openai: Store = {
     headers: (token) => ({ authorization: `Bearer ${token}` }),
   },
   async list(source, { get }) {
-    const all = async <T>(path: string): Promise<T[]> => {
+    const all = async <T>(path: string, query: Record<string, string> = {}): Promise<T[]> => {
       const items: T[] = [];
       let after: string | undefined;
       for (let page = 0; page < maxPages; page++) {
-        const body = (await get(path, { limit: "100", ...(after ? { after } : {}) })) as {
+        const body = (await get(path, { ...query, limit: "100", ...(after ? { after } : {}) })) as {
           data?: T[];
           has_more?: unknown;
           last_id?: unknown;
         };
         items.push(...(body.data ?? []));
-        if (body.has_more !== true || typeof body.last_id !== "string") return items;
-        after = body.last_id;
+        after = nextCursor("openai", body);
+        if (!after) return items;
       }
       return pageLimit("openai");
     };
@@ -283,13 +294,17 @@ const openai: Store = {
         (!source.filter || project.id === source.filter),
     );
     const observations: Observation[] = [];
+    // Without `any`, OpenAI hides keys whose owner has left the project, and they would read as missing.
     for (const project of projects)
-      for (const key of await all<ProviderKey>(`/v1/organization/projects/${project.id}/api_keys`))
+      for (const key of await all<ProviderKey>(`/v1/organization/projects/${project.id}/api_keys`, {
+        owner_project_access: "any",
+      }))
         observations.push({
           kind: "openai",
           scope: source.scope,
-          name: `${String(project.name)}/${String(key.name)}`,
+          name: `${project.id}/${String(key.name)}`,
           changed: day(key.created_at),
+          expires: expiry(key.expires_at),
           lastUsed: day(key.last_used_at),
         });
     return observations;
@@ -383,8 +398,9 @@ const cloudflare: Store = {
             expires: token.expires_on ? day(token.expires_on) : "none",
             lastUsed: day(token.last_used_on),
           });
-      const total = Number(body.result_info?.total_count ?? 0);
-      if (!tokens.length || page * 50 >= total) return observations;
+      // The total is optional; without it, a short page is the last one.
+      const total = body.result_info?.total_count;
+      if (!tokens.length || (typeof total === "number" ? page * 50 >= total : tokens.length < 50)) return observations;
     }
     return pageLimit("cloudflare");
   },

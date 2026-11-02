@@ -179,12 +179,20 @@ describe("provider readers", () => {
           },
     );
     expect(await observe([{ kind: "openai", scope: "org" }], noRun, fetcher, env)).toEqual([
-      { kind: "openai", scope: "org", name: "web/server", changed: "2026-01-01", lastUsed: "2026-02-02" },
+      {
+        kind: "openai",
+        scope: "org",
+        name: "proj_1/server",
+        changed: "2026-01-01",
+        expires: undefined,
+        lastUsed: "2026-02-02",
+      },
     ]);
     expect(requests.map((request) => request.url.pathname)).toEqual([
       "/v1/organization/projects",
       "/v1/organization/projects/proj_1/api_keys",
     ]);
+    expect(requests[1]?.url.searchParams.get("owner_project_access")).toBe("any");
   });
 
   test("openrouter reads limits and pages by offset until an empty page", async () => {
@@ -291,4 +299,18 @@ describe("provider readers", () => {
     );
     expect(thrown).not.toContain("admin-a");
   });
+});
+
+test("a listing that says there is more but gives no cursor fails instead of stopping short", async () => {
+  const { fetcher } = api(() => ({ data: [{ name: "ci", status: "active" }], has_more: true }));
+  await expect(observe([{ kind: "anthropic", scope: "org" }], noRun, fetcher, env)).rejects.toThrow("gave no cursor");
+});
+
+test("cloudflare without a total keeps paging until a short page", async () => {
+  const full = Array.from({ length: 50 }, (_, at) => ({ name: `t${at}`, status: "active" }));
+  const { requests, fetcher } = api((url) => ({
+    result: url.searchParams.get("page") === "1" ? full : [{ name: "last", status: "active" }],
+  }));
+  expect(await observe([{ kind: "cloudflare", scope: "user" }], noRun, fetcher, env)).toHaveLength(51);
+  expect(requests).toHaveLength(2);
 });
