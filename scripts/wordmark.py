@@ -34,7 +34,7 @@ def text(word: str, x: float, ink: str) -> tuple[str, float]:
 def wordmark(tile: str, marks: str, ink: str) -> str:
     top = (HEIGHT - TILE) / 2
     icon = (
-        f'<svg x="8" y="{top}" width="{TILE}" height="{TILE}" viewBox="{LOGO_BOX}">'
+        f'<svg x="8" y="{top}" width="{TILE}" height="{TILE}" viewBox="{LOGO_BOX}" aria-hidden="true">'
         f'<rect width="1024" height="1024" rx="200" fill="{tile}"/>'
         f"{MARKS.replace('#f5f2ea', marks)}</svg>"
     )
