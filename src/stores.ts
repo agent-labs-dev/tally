@@ -58,6 +58,8 @@ export interface Api {
 export interface Store {
   /** What the scope names, for help text and errors. */
   scope: string;
+  /** What a scope may look like, when not a plain name. Never a flag or a path that escapes the listing. */
+  scopePattern?: RegExp;
   api?: Api;
   list(source: Source, read: Reader): Promise<Observation[]>;
 }
@@ -73,8 +75,25 @@ export const metadataCommands = [
   ["az", "keyvault", "secret", "list"],
 ];
 
-/** Whether argv starts with one of those listings. Each CLI takes its subcommand from these leading words. */
+const ghSecretsJq = ".secrets[] | [.name, .updated_at] | @tsv";
+const ghEnvironmentsJq = ".environments[].name | @uri";
+const ghPath =
+  /^(repos\/[\w.-]+\/[\w.-]+\/(actions\/secrets|environments|environments\/[\w.~%-]+\/secrets)|orgs\/[\w.-]+\/actions\/secrets)\?per_page=100$/;
+
+/**
+ * Whether argv is an allowed listing. A store CLI takes its subcommand from the leading words above. `gh api` is
+ * matched whole instead, because any extra argument, such as `-X` or `-f`, could turn a listing into a write.
+ */
 export function isMetadataCommand(argv: readonly string[]): boolean {
+  if (argv[0] === "gh")
+    return (
+      argv.length === 6 &&
+      argv[1] === "api" &&
+      argv[2] === "--paginate" &&
+      argv[3] === "--jq" &&
+      (argv[4] === ghSecretsJq || argv[4] === ghEnvironmentsJq) &&
+      ghPath.test(argv[5] ?? "")
+    );
   return metadataCommands.some((words) => words.every((word, at) => argv[at] === word));
 }
 
@@ -182,6 +201,38 @@ const azure: Store = {
       changed: day(secret.attributes?.updated),
       expires: day(secret.attributes?.expires),
     }));
+  },
+};
+
+/**
+ * GitHub Actions secrets: `github: OWNER/NAME` for a repository's secrets and its environments' secrets, named
+ * `NAME` and `env:ENVIRONMENT/NAME`, or `github: ORG` for an organization's. `filter` is a comma-separated list of the
+ * environments to read, for a repository with many. Read through `gh` and its login, which needs admin access: the
+ * Actions token of a workflow cannot list secrets.
+ */
+const github: Store = {
+  scope: "repository as OWNER/NAME, or an organization",
+  scopePattern: /^[\w.-]+(\/[\w.-]+)?$/,
+  async list(source, { run }) {
+    const lines = async (jq: string, path: string) =>
+      (await run(["gh", "api", "--paginate", "--jq", jq, `${path}?per_page=100`])).split("\n").filter(Boolean);
+    const secrets = async (path: string, prefix = ""): Promise<Observation[]> =>
+      (await lines(ghSecretsJq, path)).map((line) => {
+        const [name, updated] = line.split("\t");
+        return { kind: "github", scope: source.scope, name: `${prefix}${name}`, changed: day(updated) };
+      });
+    if (!source.scope.includes("/")) return secrets(`orgs/${source.scope}/actions/secrets`);
+    const wanted = source.filter?.split(",").map((name) => name.trim());
+    const observations = await secrets(`repos/${source.scope}/actions/secrets`);
+    // jq URL-encodes each name, so a name holding a newline or a slash stays one path segment on one line.
+    for (const encoded of await lines(ghEnvironmentsJq, `repos/${source.scope}/environments`)) {
+      const environment = decodeURIComponent(encoded);
+      if (!wanted || wanted.includes(environment))
+        observations.push(
+          ...(await secrets(`repos/${source.scope}/environments/${encoded}/secrets`, `env:${environment}/`)),
+        );
+    }
+    return observations;
   },
 };
 
@@ -406,7 +457,7 @@ const cloudflare: Store = {
   },
 };
 
-export const stores: Record<string, Store> = { gcp, aws, azure, anthropic, openai, openrouter, cloudflare };
+export const stores: Record<string, Store> = { gcp, aws, azure, github, anthropic, openai, openrouter, cloudflare };
 
 /** The same secret in any letter case, so one secret listed twice is one observation and one finding id. */
 export function observationKey({ kind, scope, name }: Observation): string {
@@ -485,7 +536,9 @@ export async function observe(
 /** Runs a store CLI. Its stderr is not echoed, because it can quote whatever the command touched. */
 export const runCommand: Run = async (argv) => {
   if (!isMetadataCommand(argv)) throw new Error(`refusing to run ${argv[0]}: only secret listings are allowed`);
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
+  // `gh` would follow GH_HOST to another server and send it that host's token, so it only ever talks to github.com.
+  const env = argv[0] === "gh" ? { ...process.env, GH_HOST: "github.com" } : process.env;
+  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", env });
   const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   if (code !== 0) throw new Error(`${argv.slice(0, 3).join(" ")} failed with exit ${code}; check its login and access`);
   return stdout;

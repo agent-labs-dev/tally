@@ -69,9 +69,10 @@ function localSecret(ref: string, repo: string | undefined): string | undefined 
   const name = ref.slice(slash + 1).toUpperCase();
   if (!name) return undefined;
   const scope = ref.slice(0, slash);
-  if (/^env:[^/]+$/.test(scope)) return name;
+  // An environment name may itself hold slashes.
+  if (/^env:./.test(scope)) return name;
   if (/^[^/]+\/[^/]+$/.test(scope)) return scope === repo ? name : undefined;
-  const scoped = /^([^/]+\/[^/]+)\/env:[^/]+$/.exec(scope);
+  const scoped = /^([^/]+\/[^/]+)\/env:./.exec(scope);
   if (scoped) return scoped[1] === repo ? name : undefined;
   return undefined;
 }
@@ -85,17 +86,22 @@ function githubRefs(entry: Entry): string[] {
  * path that includes the observed scope. So `NAME`, `SCOPE/NAME` and the store's own full path
  * (`projects/SCOPE/secrets/NAME`, or a secret URL) all match, names may hold slashes, and a same name in another
  * scope does not. Names compare case-insensitively, so one key's env name and its stored name match in any case.
+ * A `github` location names one exact place instead: `NAME` and `env:ENV/NAME` are this repository's, so a repository
+ * secret never stands in for an environment or organization one of the same name.
  */
-export function isStored(location: Location, observation: Observation): boolean {
+export function isStored(location: Location, observation: Observation, repo?: string): boolean {
   if (location.kind !== observation.kind) return false;
+  if (location.kind === "github") {
+    const local = !location.ref.includes("/") || location.ref.startsWith("env:");
+    const full = local ? (repo ? `${repo}/${location.ref}` : undefined) : location.ref;
+    return full?.toUpperCase() === `${observation.scope}/${observation.name}`.toUpperCase();
+  }
   const ref = storePath(location.ref).toUpperCase();
   const name = observation.name.toUpperCase();
   if (ref === name) return true;
   if (!ref.endsWith(`/${name}`)) return false;
-  return ref
-    .slice(0, -name.length - 1)
-    .split("/")
-    .includes(observation.scope.toUpperCase());
+  // The scope may itself hold a slash (`OWNER/NAME`), so it must appear as whole consecutive segments.
+  return `/${ref.slice(0, -name.length - 1)}/`.includes(`/${observation.scope.toUpperCase()}/`);
 }
 
 /** A secret URL such as `https://VAULT.vault.azure.net/secrets/NAME` as the path `VAULT/secrets/NAME`. */
@@ -103,8 +109,8 @@ function storePath(ref: string): string {
   return ref.replace(/^https:\/\/([^./]+)[^/]*/i, "$1");
 }
 
-function observationsOf(entry: Entry, observed: readonly Observation[] = []): Observation[] {
-  return observed.filter((observation) => entry.locations.some((location) => isStored(location, observation)));
+function observationsOf(entry: Entry, observed: readonly Observation[] = [], repo?: string): Observation[] {
+  return observed.filter((observation) => entry.locations.some((location) => isStored(location, observation, repo)));
 }
 
 /**
@@ -195,13 +201,26 @@ function storedName(ref: string): string {
 }
 
 /**
+ * The secret names `github` locations declare for this repository's workflows: its own and its environments'
+ * secrets, and an organization secret (`ORG/NAME`, ORG owning this repository), which serves them too.
+ */
+function declaredInGithub(entries: readonly Entry[], repo: string | undefined): Set<string | undefined> {
+  const owner = repo?.split("/")[0]?.toUpperCase();
+  const orgSecret = (ref: string) => {
+    const [scope, name, ...rest] = ref.split("/");
+    return !rest.length && name && scope?.toUpperCase() === owner ? name.toUpperCase() : undefined;
+  };
+  return new Set(entries.flatMap(githubRefs).flatMap((ref) => [localSecret(ref, repo), orgSecret(ref)]));
+}
+
+/**
  * A secret the code reads that nobody declared is a key with no owner, limit or expiry on record. A workflow secret
  * counts as declared only by a `github` location in this repository; a variable from an env template counts as
  * declared by any location that names it, because the template says nothing about where the value is stored.
  */
 export const unregisteredRule: Rule = (entries, { referenced, templated, ignore, repo }) => {
   const ignored = new Set(ignore.map((name) => name.toUpperCase()));
-  const inGithub = new Set(entries.flatMap(githubRefs).map((ref) => localSecret(ref, repo)));
+  const inGithub = declaredInGithub(entries, repo);
   const anywhere = new Set(entries.flatMap((entry) => entry.locations.map((location) => storedName(location.ref))));
   const missing = new Map<string, string[]>();
   for (const [name, files] of referenced ?? []) if (!inGithub.has(name)) missing.set(name, [...files]);
@@ -242,9 +261,9 @@ export const unusedRule: Rule = (entries, { referenced, repo }) => {
 };
 
 /** A stored value nobody has changed in `staleDays` is a key nobody has rotated. The oldest copy decides. */
-export const staleRule: Rule = (entries, { today, staleDays = 365, observed }) =>
+export const staleRule: Rule = (entries, { today, staleDays = 365, observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
-    const changed = observationsOf(entry, observed)
+    const changed = observationsOf(entry, observed, repo)
       .flatMap((observation) => observation.changed ?? [])
       .sort()[0];
     if (!changed) return [];
@@ -266,14 +285,18 @@ export const staleRule: Rule = (entries, { today, staleDays = 365, observed }) =
  * Compares the stores that were read with the declarations: a secret a store holds that no entry names is
  * `unregistered`, and a declared location in a store that was read but does not hold it is `missing`.
  */
-export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
+export const storeRule: Rule = (entries, { observed, sources, ignore, referenced, repo }) => {
   if (!observed || !sources?.length) return [];
   const ignored = new Set(ignore.map((name) => name.toUpperCase()));
   const locations = entries.flatMap((entry) => entry.locations.map((location) => ({ entry, location })));
+  const inGithub = declaredInGithub(entries, repo);
   const findings: Finding[] = [];
   for (const observation of observed) {
     if (ignored.has(observation.name.toUpperCase())) continue;
-    if (locations.some(({ location }) => isStored(location, observation))) continue;
+    if (locations.some(({ location }) => isStored(location, observation, repo))) continue;
+    // A workflow secret nobody declared anywhere is already reported by `unregisteredRule`, under its own id.
+    const name = storedName(observation.name);
+    if (observation.kind === "github" && referenced?.has(name) && !inGithub.has(name)) continue;
     const where = `${observation.kind}: ${observation.scope}`;
     findings.push({
       id: `unregistered:${observationKey(observation)}`,
@@ -287,7 +310,7 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
   for (const { entry, location } of locations) {
     const ofKind = sources.filter((source) => source.kind === location.kind);
     if (!ofKind.length) continue;
-    if (observed.some((observation) => isStored(location, observation))) continue;
+    if (observed.some((observation) => isStored(location, observation, repo))) continue;
     // Missing only when that is certain. A filtered source lists part of its store, so it proves nothing is gone. A
     // bare name needs every source of its kind read whole; a ref with a path needs a scope it names read whole, since
     // without one it may be another scope's secret or a name that holds a slash.

@@ -11,8 +11,8 @@ export function skipping(globs: readonly string[]): Skip {
 }
 
 const expression = /\$\{\{([\s\S]*?)\}\}/g;
-const dotted = /\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)/g;
-const indexed = /\bsecrets\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g;
+const dotted = /(?<![\w.])secrets\.([A-Za-z_][A-Za-z0-9_]*)/g;
+const indexed = /(?<![\w.])secrets\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g;
 const automatic = "GITHUB_TOKEN";
 
 /** Every string in a parsed YAML document, keys included, so no comment ever reaches the scan. */
@@ -70,7 +70,7 @@ export function referencedSecrets(root: string, skip: Skip = () => false): Map<s
  * Names that hold a credential by convention. Identifiers, hosts and flags (`*_ID`, `*_HOST`, `*_ENABLED`) do not
  * match. A tally file adds its own conventions in `credentialNames` and silences false matches with `ignore`.
  */
-export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIALS?)$/;
+export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|PAT|KEYSTORE|HOOK|DSN|CREDENTIALS?)$/;
 
 /** Committed templates that list the variables an app reads. A real `.env` is never opened. */
 const template = /(^|\/)(\.env\.(example|sample|template|dist)|[\w.-]+\.env\.example)$/;
