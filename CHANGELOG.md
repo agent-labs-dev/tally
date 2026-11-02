@@ -9,6 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 First release.
 
+- **Secret stores.** `sources:` reads names and dates from Google Cloud Secret Manager, AWS Secrets Manager and Azure
+  Key Vault through their own CLIs, never values. `check` reports a value unchanged for `staleDays` as `stale`, a
+  declared secret the store lacks as `missing`, and a stored secret nobody declared as `unregistered`, and a store's
+  expiry fills in an unknown one. `--offline` skips the stores for a quick check.
 - **Keys found from the code.** Credential-named variables in tracked env templates count as keys the code reads,
   next to the secrets workflows reference. `tally init` drafts both, and `check` reports any nobody declared. Only
   names are read, and `credentialNames` adds naming conventions.

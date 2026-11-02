@@ -28,6 +28,7 @@ gitleaks over the workflows and the full history.
 - `src/schema.ts`: the entry format, the validator and the credential-shaped text guard
 - `src/tallyfile.ts`: load and write `.tally.yaml`, and find it from a directory
 - `src/scan.ts`: the secrets a repository's workflows and env templates name, by name only
+- `src/stores.ts`: read-only store readers (gcp, aws, azure) and the value commands none may run
 - `src/reconcile.ts`: `Rule` functions and the findings they return
 - `src/issues.ts`: the desired issues, and the `gh` calls that sync them
 - `src/cli.ts`: argument parsing, output, exit codes

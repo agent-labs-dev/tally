@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "../src/reconcile";
-import { daysUntil, type Rule, reconcile } from "../src/reconcile";
+import { daysUntil, expiryRule, type Rule, reconcile, staleRule, storeRule } from "../src/reconcile";
 import type { Entry } from "../src/schema";
 
 const today = "2026-01-01";
@@ -205,5 +205,64 @@ describe("reconcile", () => {
   test("action findings sort before gap findings", () => {
     const findings = reconcile([entry({ expires: "2026-01-10", limit: "unknown" })], context);
     expect(findings.map((finding) => finding.severity)).toEqual(["action", "gap"]);
+  });
+});
+
+describe("store rules", () => {
+  const sources = [{ kind: "gcp", scope: "prod" }];
+  const stored = (over: Partial<Entry> = {}) =>
+    entry({ locations: [{ kind: "gcp", ref: "prod/PAYMENTS_API_KEY" }], expires: "unknown", limit: "none", ...over });
+  const seen = (over = {}) => ({ kind: "gcp", scope: "prod", name: "PAYMENTS_API_KEY", ...over });
+
+  test("a value unchanged for staleDays is stale, judged by its oldest copy", () => {
+    const findings = reconcile(
+      [stored()],
+      { ...context, staleDays: 365, sources, observed: [seen({ changed: "2024-12-01" })] },
+      [staleRule],
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({ id: "stale:payments-api", kind: "stale", severity: "action" }),
+    ]);
+    expect(
+      reconcile([stored()], { ...context, staleDays: 365, observed: [seen({ changed: "2025-06-01" })] }, [staleRule]),
+    ).toEqual([]);
+  });
+
+  test("a store's expiry fills in an unknown one", () => {
+    const findings = reconcile([stored()], { ...context, sources, observed: [seen({ expires: "2026-01-10" })] }, [
+      expiryRule,
+    ]);
+    expect(findings[0]).toMatchObject({ kind: "expiring", title: "payments-api expires 2026-01-10" });
+  });
+
+  test("an undeclared stored secret is unregistered and a declared one the store lacks is missing", () => {
+    const findings = reconcile(
+      [
+        stored({
+          locations: [
+            { kind: "gcp", ref: "prod/GONE_KEY" },
+            { kind: "gcp", ref: "staging/OTHER_KEY" },
+          ],
+        }),
+      ],
+      { ...context, sources, observed: [seen()] },
+      [storeRule],
+    );
+    // The staging ref is not reported: that scope was never read.
+    expect(findings.map((finding) => finding.id).sort()).toEqual([
+      "missing:payments-api:gcp:prod/GONE_KEY",
+      "unregistered:gcp:prod:PAYMENTS_API_KEY",
+    ]);
+  });
+
+  test("a full store path and a bare name both match, and a same name in another scope does not", () => {
+    const observed = [seen(), seen({ scope: "staging" })];
+    const full = stored({ locations: [{ kind: "gcp", ref: "projects/prod/secrets/payments_api_key" }] });
+    const findings = reconcile(
+      [full],
+      { ...context, sources: [...sources, { kind: "gcp", scope: "staging" }], observed },
+      [storeRule],
+    );
+    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:gcp:staging:PAYMENTS_API_KEY"]);
   });
 });

@@ -22,6 +22,9 @@ today. Exit 1 is an error and exit 2 is wrong usage.
 For an expiry finding, tell the user the key id, the expiry date, the owner and the runbook. For `unregistered`, the
 documented fix is to add the entry, or to list the name under `ignore` when it is not a credential. For `unused`, ask
 the owner before revoking: say that Actions secrets are only readable by workflows, so it is likely unused.
+For `stale`, tell the owner the date the stored value last changed and ask them to rotate it, then record the new
+expiry with `tally rotated`. For `missing`, the secret was deleted or renamed in its store: ask the owner which, then
+remove the location or restore the secret.
 
 Do not decide on your own that a key is unused or safe to revoke. Ask the owner named in the entry.
 
