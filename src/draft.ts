@@ -63,7 +63,7 @@ export function draft(existing: readonly Entry[], context: Context, owner: strin
     found.push({
       secret: observation.name.toUpperCase(),
       location: { kind: observation.kind, ref: `${observation.scope}/${observation.name}` },
-      has: (entry) => entry.locations.some((at) => isStored(at, observation)),
+      has: (entry) => entry.locations.some((at) => isStored(at, observation, context.repo)),
       // A provider key's name is free text, not a variable name, so it is linked by hand rather than drafted.
       draftable: !stores[observation.kind]?.api && credentialName.test(observation.name.toUpperCase()),
     });

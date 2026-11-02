@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **GitHub secrets.** `github: OWNER/NAME` reads a repository's Actions and environment secret names and update
   dates, and `github: ORG` an organization's, through `gh`. An Actions secret unchanged for `staleDays` is now
   reported as `stale`, and an organization secret can be declared as `github: ORG/NAME`.
+- **Exact GitHub scopes.** A `github` location matches only its own repository, environment or organization, so a
+  repository secret no longer stands in for an environment secret of the same name. Environment names may hold
+  slashes or other characters GitHub allows.
+- **Fewer false workflow secrets.** A job or step named `secrets` (`needs.secrets.result`) is no longer read as a secret.
 - **More credential names.** Env templates also count names ending in `PASSPHRASE`, `PAT`, `KEYSTORE` or `HOOK` as
   credentials.
 

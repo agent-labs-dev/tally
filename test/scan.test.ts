@@ -34,6 +34,15 @@ describe("referencedSecrets", () => {
     expect(referencedSecrets(root)?.size).toBe(0);
   });
 
+  test("a job or output named secrets is not the secrets context", () => {
+    const root = repository();
+    writeFileSync(
+      join(root, ".github", "workflows", "ci.yml"),
+      `env:\n  A: \${{ needs.secrets.result }}\n  B: \${{ steps.secrets.outputs['KEY'] }}\n`,
+    );
+    expect(referencedSecrets(root)?.size).toBe(0);
+  });
+
   test("ignores comments and text outside expressions", () => {
     const root = repository();
     writeFileSync(

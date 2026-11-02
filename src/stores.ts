@@ -76,9 +76,9 @@ export const metadataCommands = [
 ];
 
 const ghSecretsJq = ".secrets[] | [.name, .updated_at] | @tsv";
-const ghEnvironmentsJq = ".environments[].name";
+const ghEnvironmentsJq = ".environments[].name | @uri";
 const ghPath =
-  /^(repos\/[\w.-]+\/[\w.-]+\/(actions\/secrets|environments|environments\/[\w.%-]+\/secrets)|orgs\/[\w.-]+\/actions\/secrets)\?per_page=100$/;
+  /^(repos\/[\w.-]+\/[\w.-]+\/(actions\/secrets|environments|environments\/[\w.~%-]+\/secrets)|orgs\/[\w.-]+\/actions\/secrets)\?per_page=100$/;
 
 /**
  * Whether argv is an allowed listing. A store CLI takes its subcommand from the leading words above. `gh api` is
@@ -224,14 +224,14 @@ const github: Store = {
     if (!source.scope.includes("/")) return secrets(`orgs/${source.scope}/actions/secrets`);
     const wanted = source.filter?.split(",").map((name) => name.trim());
     const observations = await secrets(`repos/${source.scope}/actions/secrets`);
-    for (const environment of await lines(ghEnvironmentsJq, `repos/${source.scope}/environments`))
+    // jq URL-encodes each name, so a name holding a newline or a slash stays one path segment on one line.
+    for (const encoded of await lines(ghEnvironmentsJq, `repos/${source.scope}/environments`)) {
+      const environment = decodeURIComponent(encoded);
       if (!wanted || wanted.includes(environment))
         observations.push(
-          ...(await secrets(
-            `repos/${source.scope}/environments/${encodeURIComponent(environment)}/secrets`,
-            `env:${environment}/`,
-          )),
+          ...(await secrets(`repos/${source.scope}/environments/${encoded}/secrets`, `env:${environment}/`)),
         );
+    }
     return observations;
   },
 };
@@ -536,7 +536,9 @@ export async function observe(
 /** Runs a store CLI. Its stderr is not echoed, because it can quote whatever the command touched. */
 export const runCommand: Run = async (argv) => {
   if (!isMetadataCommand(argv)) throw new Error(`refusing to run ${argv[0]}: only secret listings are allowed`);
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
+  // `gh` would follow GH_HOST to another server and send it that host's token, so it only ever talks to github.com.
+  const env = argv[0] === "gh" ? { ...process.env, GH_HOST: "github.com" } : process.env;
+  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", env });
   const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   if (code !== 0) throw new Error(`${argv.slice(0, 3).join(" ")} failed with exit ${code}; check its login and access`);
   return stdout;

@@ -344,13 +344,38 @@ describe("github secrets", () => {
   const github = (ref: string) =>
     entry({ locations: [{ kind: "github", ref }], expires: "none", expiresNote: "n", limit: "none" });
 
-  test("a location names a secret in a scope that holds a slash only as whole segments", () => {
-    const seen = { kind: "github", scope: "acme/app", name: "DEPLOY_TOKEN", changed: "2024-01-01" };
-    const stale = (ref: string) =>
-      reconcile([github(ref)], { ...context, staleDays: 365, observed: [seen] }, [staleRule]).length;
-    expect(stale("DEPLOY_TOKEN")).toBe(1);
-    expect(stale("acme/app/DEPLOY_TOKEN")).toBe(1);
-    expect(stale("acme/application/DEPLOY_TOKEN")).toBe(0);
+  test("a location names one exact scope: repository, environment or organization", () => {
+    const stale = (ref: string, name: string, scope = repo) =>
+      reconcile(
+        [github(ref)],
+        withRepo({ repo, staleDays: 365, observed: [{ kind: "github", scope, name, changed: "2024-01-01" }] }),
+        [staleRule],
+      ).length;
+    expect(stale("DEPLOY_TOKEN", "DEPLOY_TOKEN")).toBe(1);
+    expect(stale("acme/app/DEPLOY_TOKEN", "DEPLOY_TOKEN")).toBe(1);
+    expect(stale("acme/application/DEPLOY_TOKEN", "DEPLOY_TOKEN")).toBe(0);
+    expect(stale("acme/app/env:prod/DEPLOY_TOKEN", "DEPLOY_TOKEN")).toBe(0);
+    expect(stale("env:preview/one/DEPLOY_TOKEN", "env:preview/one/DEPLOY_TOKEN")).toBe(1);
+    expect(stale("acme/DEPLOY_TOKEN", "DEPLOY_TOKEN")).toBe(0);
+    expect(stale("acme/DEPLOY_TOKEN", "DEPLOY_TOKEN", "acme")).toBe(1);
+  });
+
+  test("an environment whose name holds a slash declares its workflow secret", () => {
+    const referenced = new Map([["DEPLOY_TOKEN", [".github/workflows/ci.yml"]]]);
+    expect(
+      reconcile([github("env:preview/one/DEPLOY_TOKEN")], withRepo({ referenced, repo }), [unregisteredRule]),
+    ).toEqual([]);
+  });
+
+  test("an undeclared organization copy of a declared environment secret is still reported", () => {
+    const referenced = new Map([["SHARED_TOKEN", [".github/workflows/ci.yml"]]]);
+    const observed = [{ kind: "github", scope: "acme", name: "SHARED_TOKEN" }];
+    const findings = reconcile(
+      [github("env:production/SHARED_TOKEN")],
+      withRepo({ referenced, repo, observed, sources: [{ kind: "github", scope: "acme" }] }),
+      [storeRule],
+    );
+    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:github:acme:shared_token"]);
   });
 
   test("an organization secret declared as ORG/NAME counts for this repository's workflows", () => {

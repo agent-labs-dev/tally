@@ -11,8 +11,8 @@ export function skipping(globs: readonly string[]): Skip {
 }
 
 const expression = /\$\{\{([\s\S]*?)\}\}/g;
-const dotted = /\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)/g;
-const indexed = /\bsecrets\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g;
+const dotted = /(?<![\w.])secrets\.([A-Za-z_][A-Za-z0-9_]*)/g;
+const indexed = /(?<![\w.])secrets\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g;
 const automatic = "GITHUB_TOKEN";
 
 /** Every string in a parsed YAML document, keys included, so no comment ever reaches the scan. */
