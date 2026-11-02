@@ -278,4 +278,13 @@ describe("store rules", () => {
     );
     expect(findings.map((finding) => finding.id)).toEqual(["unregistered:gcp:staging:payments_api_key"]);
   });
+
+  test("a secret URL matches by the vault in its host", () => {
+    const entry = stored({
+      locations: [{ kind: "azure", ref: "https://my-vault.vault.azure.net/secrets/payments-api" }],
+    });
+    const observed = [{ kind: "azure", scope: "my-vault", name: "payments-api" }];
+    const sources = [{ kind: "azure", scope: "my-vault" }];
+    expect(reconcile([entry], { ...context, sources, observed }, [storeRule])).toEqual([]);
+  });
 });

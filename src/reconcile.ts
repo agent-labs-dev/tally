@@ -81,12 +81,12 @@ function githubRefs(entry: Entry): string[] {
 /**
  * A location is this observation when the kinds match and the ref is the observed name, or ends in `/NAME` after a
  * path that includes the observed scope. So `NAME`, `SCOPE/NAME` and the store's own full path
- * (`projects/SCOPE/secrets/NAME`) all match, names may hold slashes, and a same name in another scope does not.
- * Names compare case-insensitively.
+ * (`projects/SCOPE/secrets/NAME`, or a secret URL) all match, names may hold slashes, and a same name in another
+ * scope does not. Names compare case-insensitively, so one key's env name and its stored name match in any case.
  */
 function isStored(location: Location, observation: Observation): boolean {
   if (location.kind !== observation.kind) return false;
-  const ref = location.ref.toUpperCase();
+  const ref = storePath(location.ref).toUpperCase();
   const name = observation.name.toUpperCase();
   if (ref === name) return true;
   if (!ref.endsWith(`/${name}`)) return false;
@@ -94,6 +94,11 @@ function isStored(location: Location, observation: Observation): boolean {
     .slice(0, -name.length - 1)
     .split("/")
     .includes(observation.scope.toUpperCase());
+}
+
+/** A secret URL such as `https://VAULT.vault.azure.net/secrets/NAME` as the path `VAULT/secrets/NAME`. */
+function storePath(ref: string): string {
+  return ref.replace(/^https:\/\/([^./]+)[^/]*/i, "$1");
 }
 
 function observationsOf(entry: Entry, observed: readonly Observation[] = []): Observation[] {
@@ -253,7 +258,7 @@ export const storeRule: Rule = (entries, { observed, sources, ignore }) => {
     // Missing only when that is certain. A filtered source lists part of its store, so it proves nothing is gone. A
     // bare name needs every source of its kind read whole; a ref with a path needs a scope it names read whole, since
     // without one it may be another scope's secret or a name that holds a slash.
-    const segments = location.ref.toLowerCase().split("/");
+    const segments = storePath(location.ref).toLowerCase().split("/");
     const whole = ofKind.filter((source) => !source.filter).map((source) => source.scope.toLowerCase());
     const certain =
       segments.length === 1

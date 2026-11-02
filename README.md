@@ -173,7 +173,7 @@ values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets`
 permission on Azure.
 
 A location matches a stored secret when its kind is the source kind and its ref is the name, `SCOPE/NAME`, or the
-store's full path (`projects/SCOPE/secrets/NAME`). An expiry the store reports fills in an entry whose `expires` is
+store's full path (`projects/SCOPE/secrets/NAME`, or a vault's secret URL). Names match in any letter case. An expiry the store reports fills in an entry whose `expires` is
 `unknown`. A filtered source lists only part of its store, so it never reports a declared secret as `missing`. A
 store that cannot be read fails the run, so a check never passes on a partial view. `tally check
 --offline` skips the stores; `issues sync` never does, because skipping them would close their issues.
