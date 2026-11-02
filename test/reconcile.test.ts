@@ -84,6 +84,17 @@ describe("limitRule", () => {
 describe("unregisteredRule", () => {
   const referenced = new Map([["PAYMENTS_API_KEY", [".github/workflows/deploy.yml"]]]);
 
+  test("a variable from an env template is declared by any location that names it", () => {
+    const templated = new Map([
+      ["PAYMENTS_API_KEY", [".env.example"]],
+      ["MAIL_TOKEN", [".env.example"]],
+    ]);
+    const stored = entry({ locations: [{ kind: "vault", ref: "kv/app/PAYMENTS_API_KEY" }] });
+    const findings = reconcile([stored], withRepo({ templated }));
+    expect(findings.map((finding) => finding.id)).toEqual(["unregistered:MAIL_TOKEN"]);
+    expect(findings[0]?.detail).toContain("`.env.example`");
+  });
+
   test("secret names match regardless of case, as GitHub matches them", () => {
     const declared = entry({ locations: [{ kind: "github", ref: "payments_api_key" }] });
     expect(reconcile([declared], withRepo({ referenced }))).toEqual([]);
@@ -97,7 +108,7 @@ describe("unregisteredRule", () => {
       kind: "unregistered",
       severity: "action",
       key: "PAYMENTS_API_KEY",
-      title: "PAYMENTS_API_KEY is used by workflows but not declared in .tally.yaml",
+      title: "PAYMENTS_API_KEY is used but not declared in .tally.yaml",
     });
     expect(findings[0]?.detail).toContain(".github/workflows/deploy.yml");
   });

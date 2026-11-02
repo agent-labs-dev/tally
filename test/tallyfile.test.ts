@@ -157,7 +157,13 @@ describe("writeTallyFile", () => {
   test("round-trips settings and every entry", async () => {
     const root = temp();
     const path = join(root, ".tally.yaml");
-    const config = { warnDays: 14, secretPatterns: [], ignore: ["BUILD_ID"], issueRepo: "owner/name" };
+    const config = {
+      warnDays: 14,
+      secretPatterns: [],
+      ignore: ["BUILD_ID"],
+      credentialNames: [],
+      issueRepo: "owner/name",
+    };
     await writeTallyFile(path, config, [entry(), entry({ id: "other-key", group: "team" })]);
     const text = await Bun.file(path).text();
     expect(text.endsWith("\n")).toBe(true);
@@ -172,13 +178,13 @@ describe("writeTallyFile", () => {
   test("refuses to write a duplicate id", async () => {
     const path = join(temp(), ".tally.yaml");
     await expect(
-      writeTallyFile(path, { warnDays: 30, secretPatterns: [], ignore: [] }, [entry(), entry()]),
+      writeTallyFile(path, { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [] }, [entry(), entry()]),
     ).rejects.toThrow("duplicate id");
   });
 
   test("creates missing parent directories", async () => {
     const path = join(temp(), "nested", "dir", "tally.yaml");
-    await writeTallyFile(path, { warnDays: 30, secretPatterns: [], ignore: [] }, []);
+    await writeTallyFile(path, { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [] }, []);
     expect((await loadTallyFile(path)).errors).toEqual([]);
   });
 });

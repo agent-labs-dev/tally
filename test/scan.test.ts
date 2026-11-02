@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { referencedSecrets } from "../src/scan";
+import { referencedSecrets, templatedSecrets } from "../src/scan";
 
 function repository(): string {
   const root = mkdtempSync(join(tmpdir(), "tally-scan-"));
@@ -52,5 +52,47 @@ describe("referencedSecrets", () => {
   test("returns undefined when there is no workflows directory", () => {
     const root = mkdtempSync(join(tmpdir(), "tally-scan-"));
     expect(referencedSecrets(root)).toBeUndefined();
+  });
+});
+
+describe("templatedSecrets", () => {
+  function checkout(files: Record<string, string>): string {
+    const root = mkdtempSync(join(tmpdir(), "tally-env-"));
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(join(root, name, ".."), { recursive: true });
+      writeFileSync(join(root, name), text);
+    }
+    Bun.spawnSync(["git", "-C", root, "init", "-q"]);
+    Bun.spawnSync([
+      "git",
+      "-C",
+      root,
+      "add",
+      "--",
+      ...Object.keys(files).filter((name) => name !== "untracked.env.example"),
+    ]);
+    return root;
+  }
+
+  test("reads credential names from tracked templates and nothing from a real .env", () => {
+    const root = checkout({
+      ".env.example":
+        "PAYMENTS_API_KEY=replace-me\nexport DEPLOY_TOKEN=\nSERVER_PORT=8080\nCLIENT_ID=abc\n# OLD_SECRET=\n",
+      "services/web/.env.sample": "SIGNING_SECRET=\n",
+      ".env": "REAL_ONLY_KEY=x\n",
+      "untracked.env.example": "UNTRACKED_KEY=\n",
+    });
+    const found = templatedSecrets(root);
+    expect([...(found?.keys() ?? [])].sort()).toEqual(["DEPLOY_TOKEN", "PAYMENTS_API_KEY", "SIGNING_SECRET"]);
+    expect(found?.get("SIGNING_SECRET")).toEqual(["services/web/.env.sample"]);
+  });
+
+  test("a tally file adds its own credential naming conventions", () => {
+    const root = checkout({ ".env.example": "DATABASE_URL=\nSERVER_PORT=\n" });
+    expect([...(templatedSecrets(root, ["^DATABASE_URL$"])?.keys() ?? [])]).toEqual(["DATABASE_URL"]);
+  });
+
+  test("returns undefined outside a git checkout", () => {
+    expect(templatedSecrets(mkdtempSync(join(tmpdir(), "tally-env-")))).toBeUndefined();
   });
 });

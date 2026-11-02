@@ -29,7 +29,7 @@ const unregistered: Finding = {
   kind: "unregistered",
   severity: "action",
   key: "OLD_KEY",
-  title: "OLD_KEY is used by workflows but not declared in .tally.yaml",
+  title: "OLD_KEY is used but not declared in .tally.yaml",
   detail: "Referenced in:\n\n- `.github/workflows/deploy.yml`",
 };
 

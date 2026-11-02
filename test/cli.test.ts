@@ -99,7 +99,13 @@ describe("cli", () => {
     writeFileSync(config, 'warnDays: 7\nissueRepo: owner/name\nsecretPatterns: []\nignore: ["BUILD_ID"]\nkeys: []\n');
     expect((await run(addArgs("payments-api"))).code).toBe(0);
     const loaded = await loadTallyFile(config);
-    expect(loaded.config).toEqual({ warnDays: 7, secretPatterns: [], ignore: ["BUILD_ID"], issueRepo: "owner/name" });
+    expect(loaded.config).toEqual({
+      warnDays: 7,
+      secretPatterns: [],
+      ignore: ["BUILD_ID"],
+      credentialNames: [],
+      issueRepo: "owner/name",
+    });
     expect(loaded.entries.map((entry) => entry.id)).toEqual(["payments-api"]);
   });
 
@@ -221,7 +227,7 @@ describe("cli", () => {
     expect(result.code).toBe(0);
     expect(result.json.schemaVersion).toBe(1);
     expect(result.json.exitCodes).toEqual({ ok: 0, error: 1, usage: 2, findings: 3 });
-    expect(result.json.configFields).toBe("warnDays, issueRepo, secretPatterns, ignore, keys");
+    expect(result.json.configFields).toBe("warnDays, issueRepo, secretPatterns, ignore, credentialNames, keys");
   });
 });
 
