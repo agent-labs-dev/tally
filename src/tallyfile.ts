@@ -21,6 +21,8 @@ export interface Config {
   sources: Source[];
   /** A key whose stored value has not changed in this many days is reported as stale. */
   staleDays: number;
+  /** A key a provider has not seen used in this many days is reported as idle. */
+  idleDays: number;
   /** Where `issues sync` files issues when `--repo` is not given. */
   issueRepo?: string;
 }
@@ -39,6 +41,7 @@ export interface LoadedTallyFile {
 const settings = new Set([
   "warnDays",
   "staleDays",
+  "idleDays",
   "issueRepo",
   "secretPatterns",
   "ignore",
@@ -56,7 +59,7 @@ function parseSources(value: unknown): Source[] | string {
   const sources: Source[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item)) return usage;
-    const { filter, ...rest } = item as Record<string, unknown>;
+    const { filter, token, ...rest } = item as Record<string, unknown>;
     const pairs = Object.entries(rest);
     const [kind, scope] = pairs[0] ?? [];
     if (pairs.length !== 1 || !kind || !(kind in stores) || typeof scope !== "string" || !scope) return usage;
@@ -64,7 +67,13 @@ function parseSources(value: unknown): Source[] | string {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(scope))
       return `${kind} scope ${scope} must be a plain ${stores[kind]?.scope}`;
     if (filter !== undefined && (typeof filter !== "string" || !filter)) return "a source filter must be text";
-    sources.push({ kind, scope, ...(filter ? { filter } : {}) });
+    // The name of an environment variable, never the token itself.
+    if (token !== undefined) {
+      if (!stores[kind]?.api) return `${kind} reads through its CLI login and takes no token`;
+      if (typeof token !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(token))
+        return "a source token is the NAME of an environment variable, in upper case";
+    }
+    sources.push({ kind, scope, ...(filter ? { filter } : {}), ...(token ? { token } : {}) });
   }
   return sources;
 }
@@ -78,6 +87,7 @@ export function freshConfig(): Config {
   return {
     warnDays: 30,
     staleDays: 365,
+    idleDays: 90,
     secretPatterns: [],
     ignore: [],
     credentialNames: [],
@@ -126,15 +136,11 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
   for (const key of new Set(topLevel.filter((key, at) => topLevel.indexOf(key) !== at)))
     errors.push({ path, message: `${withheld(key ?? "")} is set more than once` });
 
-  const warnDays = record.warnDays;
-  if (warnDays !== undefined) {
-    if (Number.isInteger(warnDays) && (warnDays as number) > 0) config.warnDays = warnDays as number;
-    else errors.push({ path, message: "warnDays must be a positive whole number" });
-  }
-  const staleDays = record.staleDays;
-  if (staleDays !== undefined) {
-    if (Number.isInteger(staleDays) && (staleDays as number) > 0) config.staleDays = staleDays as number;
-    else errors.push({ path, message: "staleDays must be a positive whole number" });
+  for (const setting of ["warnDays", "staleDays", "idleDays"] as const) {
+    const days = record[setting];
+    if (days === undefined) continue;
+    if (Number.isInteger(days) && (days as number) > 0) config[setting] = days as number;
+    else errors.push({ path, message: `${setting} must be a positive whole number` });
   }
   if (record.sources !== undefined) {
     const parsed = parseSources(record.sources);
@@ -220,12 +226,17 @@ export async function writeTallyFile(path: string, config: Config, entries: read
   const document: Record<string, unknown> = {
     warnDays: config.warnDays,
     staleDays: config.staleDays,
+    idleDays: config.idleDays,
     issueRepo: config.issueRepo,
     secretPatterns: config.secretPatterns,
     ignore: config.ignore,
     credentialNames: config.credentialNames,
     ignorePaths: config.ignorePaths,
-    sources: config.sources.map(({ kind, scope, filter }) => ({ [kind]: scope, ...(filter ? { filter } : {}) })),
+    sources: config.sources.map(({ kind, scope, filter, token }) => ({
+      [kind]: scope,
+      ...(filter ? { filter } : {}),
+      ...(token ? { token } : {}),
+    })),
     keys,
   };
   if (document.issueRepo === undefined) delete document.issueRepo;

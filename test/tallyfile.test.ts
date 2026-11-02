@@ -155,7 +155,7 @@ describe("loadTallyFile", () => {
 
 test("a setting written twice is an error, not a silent override", async () => {
   const path = join(temp(), ".tally.yaml");
-  writeFileSync(path, "sources:\n  - gcp: prod\n\"sources\": []\nkeys: []\n");
+  writeFileSync(path, 'sources:\n  - gcp: prod\n"sources": []\nkeys: []\n');
   const loaded = await loadTallyFile(path);
   expect(loaded.errors.map((error) => error.message)).toEqual(["sources is set more than once"]);
 });
@@ -172,6 +172,7 @@ describe("writeTallyFile", () => {
       ignorePaths: [],
       sources: [],
       staleDays: 365,
+      idleDays: 90,
       issueRepo: "owner/name",
     };
     await writeTallyFile(path, config, [entry(), entry({ id: "other-key", group: "team" })]);
@@ -198,6 +199,7 @@ describe("writeTallyFile", () => {
           ignorePaths: [],
           sources: [],
           staleDays: 365,
+          idleDays: 90,
         },
         [entry(), entry()],
       ),
@@ -216,9 +218,25 @@ describe("writeTallyFile", () => {
         ignorePaths: [],
         sources: [],
         staleDays: 365,
+        idleDays: 90,
       },
       [],
     );
     expect((await loadTallyFile(path)).errors).toEqual([]);
   });
+});
+
+test("a source token is an upper-case variable name, and only for a provider", async () => {
+  const path = join(temp(), ".tally.yaml");
+  for (const [source, message] of [
+    ["- openrouter: team\n    token: router_admin", "NAME of an environment variable"],
+    ["- gcp: prod\n    token: GCP_TOKEN", "takes no token"],
+  ]) {
+    writeFileSync(path, `sources:\n  ${source}\nkeys: []\n`);
+    expect((await loadTallyFile(path)).errors.map((error) => error.message).join()).toContain(message ?? "");
+  }
+  writeFileSync(path, "sources:\n  - openrouter: team\n    token: ROUTER_ADMIN\nkeys: []\n");
+  const loaded = await loadTallyFile(path);
+  expect(loaded.errors).toEqual([]);
+  expect(loaded.config.sources).toEqual([{ kind: "openrouter", scope: "team", token: "ROUTER_ADMIN" }]);
 });

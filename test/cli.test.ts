@@ -110,6 +110,7 @@ describe("cli", () => {
       ignorePaths: [],
       sources: [],
       staleDays: 365,
+      idleDays: 90,
       issueRepo: "owner/name",
     });
     expect(loaded.entries.map((entry) => entry.id)).toEqual(["payments-api"]);
@@ -253,7 +254,7 @@ describe("cli", () => {
     expect(result.json.schemaVersion).toBe(1);
     expect(result.json.exitCodes).toEqual({ ok: 0, error: 1, usage: 2, findings: 3 });
     expect(result.json.configFields).toBe(
-      "warnDays, staleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
+      "warnDays, staleDays, idleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
     );
   });
 });

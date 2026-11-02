@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "../src/reconcile";
-import { daysUntil, expiryRule, type Rule, reconcile, staleRule, storeRule } from "../src/reconcile";
+import {
+  daysUntil,
+  expiryRule,
+  idleRule,
+  limitRule,
+  type Rule,
+  reconcile,
+  staleRule,
+  storeRule,
+} from "../src/reconcile";
 import type { Entry } from "../src/schema";
 
 const today = "2026-01-01";
@@ -286,5 +295,45 @@ describe("store rules", () => {
     const observed = [{ kind: "azure", scope: "my-vault", name: "payments-api" }];
     const sources = [{ kind: "azure", scope: "my-vault" }];
     expect(reconcile([entry], { ...context, sources, observed }, [storeRule])).toEqual([]);
+  });
+});
+
+describe("provider facts", () => {
+  const key = (over: Partial<Entry> = {}) =>
+    entry({ locations: [{ kind: "openrouter", ref: "team/app" }], expires: "unknown", limit: "unknown", ...over });
+  const seen = (over = {}) => ({ kind: "openrouter", scope: "team", name: "app", ...over });
+
+  test("a provider's limit fills an unknown one, and a reported none is a gap of its own", () => {
+    expect(reconcile([key()], { ...context, observed: [seen({ limit: "$50 per monthly" })] }, [limitRule])).toEqual([]);
+    expect(reconcile([key()], { ...context, observed: [seen({ limit: "none" })] }, [limitRule])).toEqual([
+      expect.objectContaining({ id: "gap:payments-api:limit", kind: "no-limit", severity: "gap" }),
+    ]);
+    expect(
+      reconcile([key({ limit: "none" })], { ...context, observed: [seen({ limit: "none" })] }, [limitRule]),
+    ).toEqual([]);
+  });
+
+  test("a provider's none is a no-expiry gap, and a dated copy wins over it", () => {
+    expect(reconcile([key()], { ...context, observed: [seen({ expires: "none" })] }, [expiryRule])).toEqual([
+      expect.objectContaining({ kind: "no-expiry", severity: "gap" }),
+    ]);
+    const both = [seen({ expires: "none" }), { ...seen({ expires: "2026-01-05" }), scope: "other" }];
+    const twoCopies = key({
+      locations: [
+        { kind: "openrouter", ref: "team/app" },
+        { kind: "openrouter", ref: "other/app" },
+      ],
+    });
+    expect(reconcile([twoCopies], { ...context, observed: both }, [expiryRule])[0]).toMatchObject({ kind: "expiring" });
+  });
+
+  test("a key unused for idleDays is idle, judged by its newest use", () => {
+    expect(
+      reconcile([key()], { ...context, idleDays: 90, observed: [seen({ lastUsed: "2025-09-01" })] }, [idleRule]),
+    ).toEqual([expect.objectContaining({ id: "idle:payments-api", kind: "idle", severity: "action" })]);
+    expect(
+      reconcile([key()], { ...context, idleDays: 90, observed: [seen({ lastUsed: "2025-12-01" })] }, [idleRule]),
+    ).toEqual([]);
+    expect(reconcile([key()], { ...context, observed: [seen()] }, [idleRule])).toEqual([]);
   });
 });

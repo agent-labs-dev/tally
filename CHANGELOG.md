@@ -7,6 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-02
+
+- **Provider key listings.** `sources:` reads Anthropic, OpenAI, OpenRouter and Cloudflare key listings through their
+  admin APIs, with the token from an environment variable. A provider's expiry and spend limit fill in an unknown one,
+  and its last-use date reports a key unused for `idleDays` as `idle`. A provider that says a key never expires or has
+  no limit is reported as a `no-expiry` or `no-limit` gap. Requests are GET only, to that provider's own key listing
+  paths, with no redirects.
+
 ## [0.2.0] - 2026-11-02
 
 - **Terminal view.** `tally ui` lists keys by urgency with the selected key's locations and findings beside it, and a
