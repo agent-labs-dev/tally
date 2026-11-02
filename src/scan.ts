@@ -55,3 +55,40 @@ export function referencedSecrets(root: string): Map<string, string[]> | undefin
   }
   return referenced;
 }
+
+/**
+ * Names that hold a credential by convention. Identifiers, hosts and flags (`*_ID`, `*_HOST`, `*_ENABLED`) do not
+ * match. A tally file adds its own conventions in `credentialNames` and silences false matches with `ignore`.
+ */
+export const credentialName = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIALS?)$/;
+
+/** Committed templates that list the variables an app reads. A real `.env` is never opened. */
+const template = /(^|\/)(\.env\.(example|sample|template|dist)|[\w.-]+\.env\.example)$/;
+const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+/**
+ * Credential-named variables the code reads, from the env templates git tracks, mapped to the templates that list
+ * them. Only the name left of `=` is read, never the value. `undefined` means the root is not a git checkout.
+ */
+export function templatedSecrets(root: string, extra: readonly string[] = []): Map<string, string[]> | undefined {
+  const listed = Bun.spawnSync(["git", "-C", root, "ls-files", "-z"], { stdout: "pipe", stderr: "ignore" });
+  if (listed.exitCode !== 0) return undefined;
+  const patterns = [credentialName, ...extra.map((pattern) => new RegExp(pattern))];
+  const files = listed.stdout
+    .toString()
+    .split("\0")
+    .filter((file) => template.test(file))
+    .sort();
+
+  const found = new Map<string, string[]>();
+  for (const file of files) {
+    for (const line of readFileSync(join(root, file), "utf8").split("\n")) {
+      const name = assignment.exec(line)?.[1]?.toUpperCase();
+      if (!name || !patterns.some((pattern) => pattern.test(name))) continue;
+      const places = found.get(name) ?? [];
+      if (!places.includes(file)) places.push(file);
+      found.set(name, places);
+    }
+  }
+  return found;
+}

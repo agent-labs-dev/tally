@@ -11,11 +11,11 @@ export interface Config {
   secretPatterns: string[];
   /** Secret names workflows reference that are not credentials, such as ids and URLs. */
   ignore: string[];
+  /** Extra regular expressions for variable names in env templates that hold credentials, beyond the built-in ones. */
+  credentialNames: string[];
   /** Where `issues sync` files issues when `--repo` is not given. */
   issueRepo?: string;
 }
-
-export const defaultConfig: Config = { warnDays: 30, secretPatterns: [], ignore: [] };
 
 export interface LoadProblem {
   path: string;
@@ -28,7 +28,7 @@ export interface LoadedTallyFile {
   errors: LoadProblem[];
 }
 
-const settings = new Set(["warnDays", "issueRepo", "secretPatterns", "ignore", "keys"]);
+const settings = new Set(["warnDays", "issueRepo", "secretPatterns", "ignore", "credentialNames", "keys"]);
 const repoName = /^[\w.-]+\/[\w.-]+$/;
 
 function stringList(value: unknown): string[] | undefined {
@@ -36,8 +36,8 @@ function stringList(value: unknown): string[] | undefined {
   return value as string[];
 }
 
-function freshConfig(): Config {
-  return { warnDays: defaultConfig.warnDays, secretPatterns: [], ignore: [] };
+export function freshConfig(): Config {
+  return { warnDays: 30, secretPatterns: [], ignore: [], credentialNames: [] };
 }
 
 /**
@@ -96,6 +96,19 @@ export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
     if (list) config.ignore = list;
     else errors.push({ path, message: "ignore must be a list of secret names" });
   }
+  if (record.credentialNames !== undefined) {
+    const list = stringList(record.credentialNames);
+    const valid = list?.every((pattern) => {
+      try {
+        new RegExp(pattern);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (list && valid) config.credentialNames = list;
+    else errors.push({ path, message: "credentialNames must be a list of regular expressions" });
+  }
   // Before the entries: every one of them is checked against these patterns. The raw text is checked again too,
   // because a comment that only this file's own patterns catch never reaches a parsed entry.
   addSecretPatterns(config.secretPatterns);
@@ -144,6 +157,7 @@ export async function writeTallyFile(path: string, config: Config, entries: read
     issueRepo: config.issueRepo,
     secretPatterns: config.secretPatterns,
     ignore: config.ignore,
+    credentialNames: config.credentialNames,
     keys,
   };
   if (document.issueRepo === undefined) delete document.issueRepo;

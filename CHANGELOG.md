@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 First release.
 
+- **Keys found from the code.** Credential-named variables in tracked env templates count as keys the code reads,
+  next to the secrets workflows reference. `tally init` drafts both, and `check` reports any nobody declared. Only
+  names are read, and `credentialNames` adds naming conventions.
 - **One file per repository.** Settings and keys live together in `.tally.yaml`: `warnDays`, `issueRepo`,
   `secretPatterns`, `ignore` and `keys`. Discovery is `TALLY_CONFIG`, then the nearest `.tally.yaml` up to the
   repository root, then `~/.config/tally/tally.yaml` for keys that live on one machine. A file can hold many keys, and

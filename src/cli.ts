@@ -3,12 +3,12 @@ import { dirname, join, resolve } from "node:path";
 import packageJson from "../package.json";
 import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
 import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
-import { referencedSecrets } from "./scan";
+import { referencedSecrets, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
 import {
   type Config,
-  defaultConfig,
   findTallyFile,
+  freshConfig,
   type LoadedTallyFile,
   loadTallyFile,
   writeTallyFile,
@@ -20,7 +20,7 @@ export const exit = { ok: 0, error: 1, usage: 2, findings: 3 } as const;
 const help = `tally tracks a repository's API keys: owner, where each one is stored, its limit and its expiry. It never reads, stores or prints a key.
 Output is JSON when stdout is not a terminal or with --json.
 
-  tally init [--owner HANDLE]   write .tally.yaml with a draft entry per secret this repository's workflows use
+  tally init [--owner HANDLE]   write .tally.yaml with a draft entry per secret the workflows and env templates name
   tally check [--today YYYY-MM-DD]
                                  report expiring keys, missing facts and secrets no workflow declares, action findings exit 3
   tally notify [--today YYYY-MM-DD]
@@ -167,6 +167,7 @@ function buildContext(
     today: flags.today ?? todayUtc(),
     warnDays: loaded.config.warnDays,
     referenced: referencedSecrets(root),
+    templated: templatedSecrets(root, loaded.config.credentialNames),
     ignore: loaded.config.ignore,
     repo: scannedRepo(root, env),
   };
@@ -240,7 +241,7 @@ function schema() {
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
-    configFields: "warnDays, issueRepo, secretPatterns, ignore, keys",
+    configFields: "warnDays, issueRepo, secretPatterns, ignore, credentialNames, keys",
   };
 }
 
@@ -257,21 +258,30 @@ async function dispatch(
       expectNoArgs(rest, command);
       const path = configPath(flags, env, cwd);
       if (existsSync(path)) throw new Error(`${withheld(path)} already exists`);
-      const referenced = referencedSecrets(repositoryRoot(dirname(path))) ?? new Map<string, string[]>();
+      const root = repositoryRoot(dirname(path));
+      const workflows = referencedSecrets(root) ?? new Map<string, string[]>();
+      const templates = templatedSecrets(root) ?? new Map<string, string[]>();
       const used = new Set<string>();
-      const drafted = [...referenced.keys()].sort().map((secret) => ({ secret, id: draftId(secret, used) }));
+      const drafted = [...new Set([...workflows.keys(), ...templates.keys()])]
+        .sort()
+        .map((secret) => ({ secret, id: draftId(secret, used) }));
+      // A workflow secret is an Actions secret here. A template only says the code reads the variable, so `env` stands
+      // in for its store until someone records the real one.
       const entries: Entry[] = drafted.map(({ id, secret }) => ({
         id,
         service: "unknown",
         owner: flags.owner ?? "unknown",
-        locations: [{ kind: "github", ref: secret }],
+        locations: [
+          ...(workflows.has(secret) ? [{ kind: "github", ref: secret }] : []),
+          ...(templates.has(secret) ? [{ kind: "env", ref: secret }] : []),
+        ],
         expires: "unknown",
         limit: "unknown",
       }));
-      await writeTallyFile(path, { ...defaultConfig, secretPatterns: [], ignore: [] }, entries);
+      await writeTallyFile(path, freshConfig(), entries);
       const text =
         drafted.length === 0
-          ? `wrote ${withheld(path)} with no keys, because no workflow references a secret yet`
+          ? `wrote ${withheld(path)} with no keys, because no workflow or env template names a secret yet`
           : [`wrote ${withheld(path)}`, ...drafted.map(({ id, secret }) => `  ${id}  ${secret}`)].join("\n");
       return { value: { path, drafted }, text };
     }
@@ -335,7 +345,7 @@ async function dispatch(
       const path = configPath(flags, env, cwd);
       const loaded: LoadedTallyFile = existsSync(path)
         ? await loadTallyFile(path)
-        : { config: { ...defaultConfig, secretPatterns: [], ignore: [] }, entries: [], errors: [] };
+        : { config: freshConfig(), entries: [], errors: [] };
       if (loaded.errors.length > 0) return failed(loaded.errors);
       if (loaded.entries.some((entry) => entry.id === id)) throw new Error(`${withheld(id)} already exists`);
       const expires = flags.expires ?? "unknown";

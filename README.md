@@ -1,6 +1,11 @@
-<img src="assets/logo.svg" alt="" width="96">
+<div align="center">
 
-# tally
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+  <img src="assets/wordmark.svg" alt="tally" width="300">
+</picture>
+
+</div>
 
 A registry of a repository's API keys, tokens and certificates: who owns each one, where it is stored, its limit and
 when it expires. Every key is declared in one `.tally.yaml` at the repository root, and a scheduled workflow files an
@@ -19,8 +24,9 @@ Agents are the main users. Output is JSON when asked for it, and the exit codes 
    tally init --owner owner-handle
    ```
 
-   Every `${{ secrets.NAME }}` in `.github/workflows` becomes an entry with `service: unknown`,
-   `expires: unknown` and `limit: unknown`.
+   Every `${{ secrets.NAME }}` in `.github/workflows` and every credential-named variable in a tracked env template
+   (`.env.example`, `.env.sample`, `.env.template`) becomes an entry with `service: unknown`, `expires: unknown` and
+   `limit: unknown`. Only names are read: never a value, and never a real `.env`.
 
 2. Fill in the facts. Look each key up in the provider's dashboard and set `service`, `owner`, `locations`, `expires`
    and `limit`. If the provider sets no expiry, write `none` and say why in `expiresNote`.
@@ -63,7 +69,8 @@ keys:
 | `warnDays` | A dated key raises an issue this many days before it expires. Default 30 |
 | `issueRepo` | Where `issues sync` files issues. Default: `GITHUB_REPOSITORY`, else gh infers the repository from the cwd |
 | `secretPatterns` | Extra credential regular expressions, added to the built-in guard |
-| `ignore` | Secret names workflows reference that are not credentials, such as ids and URLs |
+| `ignore` | Names the scan finds that are not credentials, such as ids and URLs |
+| `credentialNames` | Extra regular expressions for credential variable names in env templates. Built in: names ending in `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `DSN` or `CREDENTIALS` |
 | `keys` | The entries, in reading order |
 
 An entry has these fields:
@@ -115,11 +122,12 @@ rotated.
 |---|---|---|
 | `expired`, `expiring` | action | The date has passed, or is inside `warnDays` |
 | `unknown-expiry`, `unknown-limit` | gap | Nobody has looked yet. The gaps share one digest issue |
-| `unregistered` | action | A workflow reads a secret no entry declares in this repository |
+| `unregistered` | action | A workflow or an env template names a secret no entry declares |
 | `unused` | action | An entry declares an Actions secret no workflow reads |
 
-The two scan findings stay quiet when there is no `.github/workflows` directory, because there is nothing to compare
-against. A secret in another repository is never reported as unused. Names in `ignore` are never reported as
+A workflow secret is declared by a `github` location in this repository. A template variable is declared by any
+location whose last segment is its name, such as `github: NAME`, `env: NAME` or `vault: kv/app/NAME`, because the
+template does not say where the value is stored. The scans stay quiet outside a git checkout. A secret in another repository is never reported as unused. Names in `ignore` are never reported as
 unregistered, and `GITHUB_TOKEN` is always skipped.
 
 Exit codes:

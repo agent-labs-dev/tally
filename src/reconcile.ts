@@ -24,6 +24,8 @@ export interface Context {
   warnDays: number;
   /** Secret names the repository references, or undefined outside a checkout. Both scan rules stay quiet then. */
   referenced?: Map<string, string[]>;
+  /** Credential-named variables the code reads from its env templates, or undefined outside a git checkout. */
+  templated?: Map<string, string[]>;
   /** Secret names workflows use that are not credentials, so they are neither declared nor reported. */
   ignore: string[];
   /** `owner/name` of the repository being checked, used to tell `github: owner/name/NAME` from this repo's secrets. */
@@ -112,19 +114,32 @@ export const limitRule: Rule = (entries) =>
       : [],
   );
 
-/** A workflow that reads a secret nobody declared is a key with no owner, limit or expiry on record. */
-export const unregisteredRule: Rule = (entries, { referenced, ignore, repo }) => {
-  if (!referenced) return [];
-  const declared = entries.flatMap(githubRefs);
-  return [...referenced]
-    .filter(([name]) => !ignore.some((ignored) => ignored.toUpperCase() === name))
-    .filter(([name]) => !declared.some((ref) => localSecret(ref, repo) === name))
+/** The last segment of any location's ref, which is the variable or secret name in every store convention. */
+function storedName(ref: string): string {
+  return (ref.split(/[/:]/).pop() ?? ref).toUpperCase();
+}
+
+/**
+ * A secret the code reads that nobody declared is a key with no owner, limit or expiry on record. A workflow secret
+ * counts as declared only by a `github` location in this repository; a variable from an env template counts as
+ * declared by any location that names it, because the template says nothing about where the value is stored.
+ */
+export const unregisteredRule: Rule = (entries, { referenced, templated, ignore, repo }) => {
+  const ignored = new Set(ignore.map((name) => name.toUpperCase()));
+  const inGithub = new Set(entries.flatMap(githubRefs).map((ref) => localSecret(ref, repo)));
+  const anywhere = new Set(entries.flatMap((entry) => entry.locations.map((location) => storedName(location.ref))));
+  const missing = new Map<string, string[]>();
+  for (const [name, files] of referenced ?? []) if (!inGithub.has(name)) missing.set(name, [...files]);
+  for (const [name, files] of templated ?? [])
+    if (!anywhere.has(name)) missing.set(name, [...(missing.get(name) ?? []), ...files]);
+  return [...missing]
+    .filter(([name]) => !ignored.has(name))
     .map(([name, files]) => ({
       id: `unregistered:${name}`,
       kind: "unregistered",
       severity: "action" as const,
       key: name,
-      title: `${name} is used by workflows but not declared in .tally.yaml`,
+      title: `${name} is used but not declared in .tally.yaml`,
       detail: ["Referenced in:", "", ...files.map((file) => `- \`${file}\``)].join("\n"),
     }));
 };

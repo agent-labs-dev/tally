@@ -21,11 +21,13 @@ bun src/index.ts --config .tally.yaml validate
 `[Unreleased]`, because the changelog script turns an entry into release notes. CI also runs actionlint, zizmor and
 gitleaks over the workflows and the full history.
 
+`assets/logo.svg` is the mark. `python3 scripts/wordmark.py` regenerates the light and dark wordmarks the README shows.
+
 ## Layout
 
 - `src/schema.ts`: the entry format, the validator and the credential-shaped text guard
 - `src/tallyfile.ts`: load and write `.tally.yaml`, and find it from a directory
-- `src/scan.ts`: the secrets a repository's workflows reference, by name only
+- `src/scan.ts`: the secrets a repository's workflows and env templates name, by name only
 - `src/reconcile.ts`: `Rule` functions and the findings they return
 - `src/issues.ts`: the desired issues, and the `gh` calls that sync them
 - `src/cli.ts`: argument parsing, output, exit codes
