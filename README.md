@@ -1,6 +1,11 @@
-<img src="assets/logo.svg" alt="" width="96">
+<div align="center">
 
-# tally
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+  <img src="assets/wordmark.svg" alt="tally" width="300">
+</picture>
+
+</div>
 
 A registry of a repository's API keys, tokens and certificates: who owns each one, where it is stored, its limit and
 when it expires. Every key is declared in one `.tally.yaml` at the repository root, and a scheduled workflow files an
