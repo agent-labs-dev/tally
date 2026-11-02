@@ -1,0 +1,19 @@
+{
+  "name": "tally",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tracks a repository's API keys by metadata without ever reading a key",
+  "type": "module",
+  "bin": {
+    "tally": "src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

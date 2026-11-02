@@ -1,0 +1,434 @@
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import packageJson from "../package.json";
+import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
+import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
+import { referencedSecrets } from "./scan";
+import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
+import {
+  type Config,
+  defaultConfig,
+  findTallyFile,
+  type LoadedTallyFile,
+  loadTallyFile,
+  writeTallyFile,
+} from "./tallyfile";
+
+/** Each code past 2 tells the caller one thing to do next, so an agent can branch without reading prose. */
+export const exit = { ok: 0, error: 1, usage: 2, findings: 3 } as const;
+
+const help = `tally tracks a repository's API keys: owner, where each one is stored, its limit and its expiry. It never reads, stores or prints a key.
+Output is JSON when stdout is not a terminal or with --json.
+
+  tally init [--owner HANDLE]   write .tally.yaml with a draft entry per secret this repository's workflows use
+  tally check [--today YYYY-MM-DD]
+                                 report expiring keys, missing facts and secrets no workflow declares, action findings exit 3
+  tally notify [--today YYYY-MM-DD]
+                                 run check, then send a desktop notification per action finding
+  tally list [--group G] [--service S]
+                                 list declared keys, filtered
+  tally validate                report tally file errors
+  tally add ID --service S --owner O --location KIND:REF [--location ...] [--group G]
+         [--expires DATE|unknown|none] [--expires-note T] [--limit L] [--label T]
+         [--fingerprint F] [--runbook PATH] [--note T]
+                                 add a key's metadata
+  tally rotated ID --expires DATE [--fingerprint F] [--today DATE]
+                                 record a rotation
+  tally issues sync [--repo OWNER/NAME] [--dry-run] [--today DATE]
+                                 create, edit and close tracking issues
+  tally schema                  machine-readable description of this CLI
+  tally --version               print the version
+
+Global flags: --config PATH, --json.
+Defaults: --config from TALLY_CONFIG, then the nearest .tally.yaml up to the repository root, then
+$XDG_CONFIG_HOME/tally/tally.yaml (~/.config/tally/tally.yaml) for keys that live on one machine.
+Expiry and limit default to unknown, which check reports as a gap.
+Exit codes: 0 ok, 1 error, 2 usage, 3 action findings, so rotate the keys they name.`;
+
+interface Flags {
+  positional: string[];
+  json: boolean;
+  help: boolean;
+  version: boolean;
+  config?: string;
+  today?: string;
+  group?: string;
+  service?: string;
+  owner?: string;
+  locations: string[];
+  expires?: string;
+  expiresNote?: string;
+  limit?: string;
+  label?: string;
+  fingerprint?: string;
+  runbook?: string;
+  note?: string;
+  repo?: string;
+  dryRun: boolean;
+}
+
+class UsageError extends Error {}
+
+export interface IO {
+  gh?: Gh;
+  stdout?: (text: string) => void;
+  isTTY?: boolean;
+  env?: Record<string, string | undefined>;
+  /** Where the repository, and so the tally file, is found. */
+  cwd?: string;
+  /** Sends a desktop notification. Injected so tests never touch the desktop. */
+  notify?: (message: string) => Promise<void>;
+}
+
+interface Result {
+  value: unknown;
+  text?: string;
+  code?: number;
+}
+
+function usageDate(flag: string, value: string): string {
+  if (!validDate(value)) throw new UsageError(`${flag} must be YYYY-MM-DD`);
+  return value;
+}
+
+function parse(args: readonly string[]): Flags {
+  const flags: Flags = { positional: [], json: false, help: false, version: false, locations: [], dryRun: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    const value = () => {
+      const next = args[++i];
+      if (next === undefined) throw new UsageError(`${arg} needs a value`);
+      return next;
+    };
+    if (arg === "--json") flags.json = true;
+    else if (arg === "--help" || arg === "-h") flags.help = true;
+    else if (arg === "--version") flags.version = true;
+    else if (arg === "--dry-run") flags.dryRun = true;
+    else if (arg === "--config") flags.config = value();
+    else if (arg === "--today") flags.today = usageDate(arg, value());
+    else if (arg === "--group") flags.group = value();
+    else if (arg === "--service") flags.service = value();
+    else if (arg === "--owner") flags.owner = value();
+    else if (arg === "--location") flags.locations.push(value());
+    else if (arg === "--expires") flags.expires = value();
+    else if (arg === "--expires-note") flags.expiresNote = value();
+    else if (arg === "--limit") flags.limit = value();
+    else if (arg === "--label") flags.label = value();
+    else if (arg === "--fingerprint") flags.fingerprint = value();
+    else if (arg === "--runbook") flags.runbook = value();
+    else if (arg === "--note") flags.note = value();
+    else if (arg === "--repo") flags.repo = value();
+    else if (arg.startsWith("-")) throw new UsageError(`unknown option ${withheld(arg)}`);
+    else flags.positional.push(arg);
+  }
+  return flags;
+}
+
+/** The nearest directory with `.git`, which is where a repository's `.tally.yaml` belongs. */
+function repositoryRoot(cwd: string): string {
+  let dir = resolve(cwd);
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(cwd);
+    dir = parent;
+  }
+}
+
+function configPath(flags: Flags, env: Record<string, string | undefined>, cwd: string): string {
+  return flags.config === undefined ? findTallyFile(cwd, env) : resolve(cwd, flags.config);
+}
+
+/** The config loads with the entries: its secret patterns have to be registered before any entry is checked. */
+async function loadAll(flags: Flags, env: Record<string, string | undefined>, cwd: string) {
+  const path = configPath(flags, env, cwd);
+  const loaded = await loadTallyFile(path);
+  return { path, ...loaded };
+}
+
+/** `owner/name` from a GitHub remote URL, in either the HTTPS or the SSH form. */
+const remotePattern = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
+
+/** The repository being checked: the runner names it, and a local checkout names it through its origin remote. */
+function scannedRepo(root: string, env: Record<string, string | undefined>): string | undefined {
+  if (env.GITHUB_REPOSITORY) return env.GITHUB_REPOSITORY;
+  const proc = Bun.spawnSync(["git", "-C", root, "remote", "get-url", "origin"], { stdout: "pipe", stderr: "ignore" });
+  return proc.exitCode === 0 ? remotePattern.exec(proc.stdout.toString().trim())?.[1] : undefined;
+}
+
+/** The checkout holding the tally file is the one whose workflows are scanned, wherever the file sits inside it. */
+function buildContext(
+  flags: Flags,
+  loaded: { path: string; config: Config },
+  env: Record<string, string | undefined>,
+): Context {
+  const root = repositoryRoot(dirname(loaded.path));
+  return {
+    today: flags.today ?? todayUtc(),
+    warnDays: loaded.config.warnDays,
+    referenced: referencedSecrets(root),
+    ignore: loaded.config.ignore,
+    repo: scannedRepo(root, env),
+  };
+}
+
+function failed(errors: readonly { path: string; message: string }[]): Result {
+  // A path can come from the environment, so it goes through the same guard as any other echoed input.
+  const shown = errors.map((error) => ({ path: withheld(error.path), message: error.message }));
+  return {
+    value: { errors: shown },
+    text: shown.map((error) => `${error.path}: ${error.message}`).join("\n"),
+    code: exit.error,
+  };
+}
+
+function expectNoArgs(rest: readonly string[], command: string): void {
+  const [extra] = rest;
+  if (extra !== undefined) throw new UsageError(`unexpected argument ${withheld(extra)} after ${command}`);
+}
+
+function location(value: string): Location {
+  const colon = value.indexOf(":");
+  if (colon <= 0 || colon === value.length - 1) throw new UsageError(`--location ${withheld(value)} must be KIND:REF`);
+  return { kind: value.slice(0, colon), ref: value.slice(colon + 1) };
+}
+
+function findingLine(finding: Finding): string {
+  const days = finding.days === undefined ? "" : ` (${finding.days} days)`;
+  return `${finding.severity.padEnd(6)} ${finding.kind} ${finding.title}${days}`;
+}
+
+/** reconcile already puts action findings first. */
+function findingsText(findings: readonly Finding[]): string {
+  return findings.length === 0 ? "no findings" : findings.map(findingLine).join("\n");
+}
+
+function entryLine(entry: Entry): string {
+  return `${entry.id}  ${entry.service}  ${entry.group ?? "-"}  ${entry.owner}  expires ${entry.expires}  limit ${entry.limit}`;
+}
+
+/** A secret name turned into an id: lowercase, underscores to hyphens, and nothing a slug cannot hold. */
+function draftId(secret: string, used: Set<string>): string {
+  const base =
+    secret
+      .toLowerCase()
+      .replaceAll("_", "-")
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/^-+|-+$/g, "") || "key";
+  let id = base;
+  for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+  used.add(id);
+  return id;
+}
+
+/** A desktop notification, only when the desktop has a notifier on PATH. */
+function notifierOnPath(): ((message: string) => Promise<void>) | undefined {
+  if (!Bun.which("notify-send")) return undefined;
+  return async (message) => {
+    const proc = Bun.spawn(["notify-send", "tally", message], { stdout: "ignore", stderr: "ignore" });
+    await proc.exited;
+  };
+}
+
+function schema() {
+  return {
+    schemaVersion,
+    version: packageJson.version,
+    exitCodes: exit,
+    commands: help,
+    entryFields:
+      "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
+    findingFields: "id, kind, severity (action or gap), key, title, days, detail",
+    configFields: "warnDays, issueRepo, secretPatterns, ignore, keys",
+  };
+}
+
+async function dispatch(
+  flags: Flags,
+  command: string,
+  rest: string[],
+  io: IO,
+  env: Record<string, string | undefined>,
+  cwd: string,
+): Promise<Result> {
+  switch (command) {
+    case "init": {
+      expectNoArgs(rest, command);
+      const path = configPath(flags, env, cwd);
+      if (existsSync(path)) throw new Error(`${withheld(path)} already exists`);
+      const referenced = referencedSecrets(repositoryRoot(dirname(path))) ?? new Map<string, string[]>();
+      const used = new Set<string>();
+      const drafted = [...referenced.keys()].sort().map((secret) => ({ secret, id: draftId(secret, used) }));
+      const entries: Entry[] = drafted.map(({ id, secret }) => ({
+        id,
+        service: "unknown",
+        owner: flags.owner ?? "unknown",
+        locations: [{ kind: "github", ref: secret }],
+        expires: "unknown",
+        limit: "unknown",
+      }));
+      await writeTallyFile(path, { ...defaultConfig, secretPatterns: [], ignore: [] }, entries);
+      const text =
+        drafted.length === 0
+          ? `wrote ${withheld(path)} with no keys, because no workflow references a secret yet`
+          : [`wrote ${withheld(path)}`, ...drafted.map(({ id, secret }) => `  ${id}  ${secret}`)].join("\n");
+      return { value: { path, drafted }, text };
+    }
+    case "check":
+    case "notify": {
+      expectNoArgs(rest, command);
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const context = buildContext(flags, loaded, env);
+      const findings = reconcile(loaded.entries, context);
+      const summary = {
+        action: findings.filter((finding) => finding.severity === "action").length,
+        gap: findings.filter((finding) => finding.severity === "gap").length,
+      };
+      const code = summary.action > 0 ? exit.findings : exit.ok;
+      let notified = 0;
+      if (command === "notify") {
+        const notifier = io.notify ?? notifierOnPath();
+        if (notifier)
+          for (const finding of findings) {
+            if (finding.severity !== "action") continue;
+            await notifier(finding.title);
+            notified++;
+          }
+      }
+      const value =
+        command === "notify"
+          ? { schemaVersion, today: context.today, findings, summary, notified }
+          : { schemaVersion, today: context.today, findings, summary };
+      if (command === "notify") return { value, text: findingsText(findings), code };
+      const text =
+        summary.action > 0
+          ? `${findingsText(findings)}\nnext: tally rotated ID --expires YYYY-MM-DD`
+          : findingsText(findings);
+      return { value, text, code };
+    }
+    case "list": {
+      expectNoArgs(rest, command);
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const entries = loaded.entries.filter(
+        (entry) =>
+          (flags.group === undefined || entry.group === flags.group) &&
+          (flags.service === undefined || entry.service === flags.service),
+      );
+      return { value: { entries }, text: entries.map(entryLine).join("\n") || "no entries" };
+    }
+    case "validate": {
+      expectNoArgs(rest, command);
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const value = { ok: true, entries: loaded.entries.length };
+      return { value, text: `${loaded.entries.length} entries valid` };
+    }
+    case "add": {
+      const [id, ...extra] = rest;
+      if (id === undefined) throw new UsageError("usage: tally add ID --service S --owner O --location KIND:REF");
+      if (extra.length > 0) throw new UsageError(`unexpected argument ${withheld(extra[0] ?? "")} after add`);
+      if (!flags.service || !flags.owner || flags.locations.length === 0)
+        throw new UsageError("add needs --service, --owner and at least one --location");
+      const path = configPath(flags, env, cwd);
+      const loaded: LoadedTallyFile = existsSync(path)
+        ? await loadTallyFile(path)
+        : { config: { ...defaultConfig, secretPatterns: [], ignore: [] }, entries: [], errors: [] };
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      if (loaded.entries.some((entry) => entry.id === id)) throw new Error(`${withheld(id)} already exists`);
+      const expires = flags.expires ?? "unknown";
+      if (expires !== "unknown" && expires !== "none") usageDate("--expires", expires);
+      const entry: Entry = {
+        id,
+        service: flags.service,
+        group: flags.group,
+        owner: flags.owner,
+        label: flags.label,
+        fingerprint: flags.fingerprint,
+        locations: flags.locations.map(location),
+        expires,
+        expiresNote: flags.expiresNote,
+        limit: flags.limit ?? "unknown",
+        runbook: flags.runbook,
+        note: flags.note,
+      };
+      await writeTallyFile(path, loaded.config, [...loaded.entries, entry]);
+      return { value: { id, path, entry }, text: `added ${id} to ${path}` };
+    }
+    case "rotated": {
+      const [id, ...extra] = rest;
+      if (id === undefined) throw new UsageError("usage: tally rotated ID --expires DATE");
+      if (extra.length > 0) throw new UsageError(`unexpected argument ${withheld(extra[0] ?? "")} after rotated`);
+      if (flags.expires === undefined) throw new UsageError("rotated needs --expires YYYY-MM-DD");
+      const expires = usageDate("--expires", flags.expires);
+      const loaded = await loadAll(flags, env, cwd);
+      // A rewrite of a file with errors could drop a field the parser rejected.
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const entry = loaded.entries.find((candidate) => candidate.id === id);
+      if (!entry) throw new Error(`no entry ${withheld(id)} in ${withheld(loaded.path)}`);
+      entry.expires = expires;
+      entry.rotated = flags.today ?? todayUtc();
+      delete entry.expiresNote;
+      if (flags.fingerprint !== undefined) entry.fingerprint = flags.fingerprint;
+      await writeTallyFile(loaded.path, loaded.config, loaded.entries);
+      return {
+        value: { id, expires: entry.expires, rotated: entry.rotated },
+        text: `rotated ${id}: expires ${entry.expires}, rotated ${entry.rotated}`,
+      };
+    }
+    case "issues": {
+      const [verb, ...extra] = rest;
+      if (verb !== "sync") throw new UsageError("usage: tally issues sync [--repo OWNER/NAME] [--dry-run]");
+      if (extra.length > 0) throw new UsageError(`unexpected argument ${withheld(extra[0] ?? "")} after issues sync`);
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      // With no repo at all, gh infers it from the working directory.
+      const repo = flags.repo ?? loaded.config.issueRepo ?? env.GITHUB_REPOSITORY;
+      const context = buildContext(flags, loaded, env);
+      const findings = reconcile(loaded.entries, context);
+      const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, loaded.entries), flags.dryRun);
+      const text = actions
+        .map((action) => `${action.do} ${action.marker}${"number" in action ? ` #${action.number}` : ""}`)
+        .join("\n");
+      return { value: { repo: repo ?? null, dryRun: flags.dryRun, actions }, text: text || "no changes" };
+    }
+    case "schema":
+      expectNoArgs(rest, command);
+      return { value: schema(), text: JSON.stringify(schema(), null, 2) };
+    default:
+      throw new UsageError(`unknown command ${withheld(command)}`);
+  }
+}
+
+export async function main(args: string[], io: IO = {}): Promise<number> {
+  const env = io.env ?? process.env;
+  const cwd = io.cwd ?? process.cwd();
+  const write = io.stdout ?? ((text: string) => process.stdout.write(`${text}\n`));
+  const isTTY = io.isTTY ?? process.stdout.isTTY;
+  const json = !isTTY || args.includes("--json");
+  try {
+    const flags = parse(args);
+    if (flags.help) {
+      write(json ? JSON.stringify({ help }) : help);
+      return exit.ok;
+    }
+    if (flags.version) {
+      write(json ? JSON.stringify({ version: packageJson.version }) : `tally ${packageJson.version}`);
+      return exit.ok;
+    }
+    const [command, ...rest] = flags.positional;
+    if (flags.dryRun && command !== "issues") throw new UsageError("--dry-run only applies to issues sync");
+    if (command === undefined)
+      throw new UsageError("usage: tally init|check|notify|list|validate|add|rotated|issues|schema, or tally --help");
+    const result = await dispatch(flags, command, rest, io, env, cwd);
+    write(json ? JSON.stringify(result.value) : (result.text ?? JSON.stringify(result.value)));
+    return result.code ?? exit.ok;
+  } catch (error) {
+    const usage = error instanceof UsageError;
+    const message = error instanceof Error ? error.message : String(error);
+    write(json ? JSON.stringify({ error: { code: usage ? "usage" : "error", message } }) : `tally: ${message}`);
+    return usage ? exit.usage : exit.error;
+  }
+}
