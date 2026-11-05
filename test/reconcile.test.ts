@@ -89,6 +89,48 @@ describe("limitRule", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ id: "gap:payments-api:limit", kind: "unknown-limit", severity: "gap" });
   });
+
+  test("unknown service and owner give gaps", () => {
+    const findings = reconcile([entry({ service: "unknown", owner: "unknown", limit: "unknown" })], context);
+    expect(findings.map((finding) => finding.id)).toEqual([
+      "gap:payments-api:limit",
+      "gap:payments-api:owner",
+      "gap:payments-api:service",
+    ]);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        id: "gap:payments-api:owner",
+        kind: "unknown-owner",
+        severity: "gap",
+        title: "payments-api has no recorded owner",
+      }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        id: "gap:payments-api:service",
+        kind: "unknown-service",
+        severity: "gap",
+        title: "payments-api has no recorded service",
+      }),
+    );
+  });
+
+  test("an organization owner gives a gap", () => {
+    const findings = reconcile([entry()], { ...context, owners: new Map([["team-payments", "Organization"]]) });
+    expect(findings).toEqual([
+      {
+        id: "gap:payments-api:owner",
+        kind: "org-owner",
+        severity: "gap",
+        key: "payments-api",
+        title: "payments-api is owned by organization team-payments, which cannot be assigned an issue",
+      },
+    ]);
+  });
+
+  test("an owner absent from the type map gives no organization finding", () => {
+    expect(reconcile([entry()], { ...context, owners: new Map() })).toEqual([]);
+  });
 });
 
 describe("unregisteredRule", () => {

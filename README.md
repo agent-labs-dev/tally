@@ -130,7 +130,7 @@ rotated.
 | Finding | Severity | Meaning |
 |---|---|---|
 | `expired`, `expiring` | action | The date has passed, or is inside `warnDays` |
-| `unknown-expiry`, `unknown-limit` | gap | Nobody has looked yet. The gaps share one digest issue |
+| `unknown-expiry`, `unknown-limit`, `unknown-service`, `unknown-owner`, `org-owner` | gap | A fact is missing, or an organization owner cannot be assigned. The gaps share one digest issue |
 | `no-expiry`, `no-limit` | gap | The entry records nothing, and its provider says the key never expires or has no spend limit |
 | `unregistered` | action | A workflow or an env template names a secret no entry declares |
 | `unused` | action | An entry declares an Actions secret no workflow reads |
@@ -295,9 +295,11 @@ terminal and does not take `--json`.
 
 - Each action finding gets one issue, labelled `tally` plus its kind (`tally:expired`, `tally:unregistered`). The id
   is stable, so the same issue is edited as a key moves from "expires in 20 days" to "expired".
-- Each issue for an entry is assigned to that entry's `owner` after it is created. When gh rejects the owner, the
-  issue stays unassigned; a failed create is never retried, so a finding never gets two issues.
-- Every gap finding shares one digest issue listing the keys with no recorded expiry or limit.
+- Each issue for an entry is assigned to that entry's `owner` after it is created, unless the owner is an organization.
+  When gh rejects the owner, the issue stays unassigned; the failure is reported in the sync output and retried on the
+  next run, so a finding never gets two issues.
+- Every gap finding shares one digest issue listing the keys with missing expiry, limit, service or assignable owner
+  facts.
 - When a finding clears, its issue is closed with a comment. No finding, no issue.
 
 Put this in `.github/workflows/tally.yml` in any repository that declares keys:

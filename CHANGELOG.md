@@ -7,6 +7,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Draft facts are visible.** Keys drafted by `tally init` with `service: unknown` or `owner: unknown` now show
+  `unknown-service` and `unknown-owner` gap findings.
+- **Help output is predictable.** Commands still print JSON when stdout is not a terminal, while help and version print
+  text unless `--json` is given.
+- **Text output is aligned.** `check`, `notify` and `list` now show headers with aligned columns, and notifications use
+  the same finding table as check output.
+- **User fallback errors explain the location.** Outside a repository, a missing user-level tally file now names the
+  repository and gives the `tally init` and `tally add` next steps.
+- **Organization owners are reported.** Online checks look up owner types and report `org-owner` when a key cannot be
+  assigned to an organization, and issue sync stops trying to assign those keys. Lookup failures are ignored, and
+  `validate` remains a file-only offline check.
+- **Assignment failures are reported and retried.** Issue sync includes assignment failures in its text and JSON output,
+  retries them on the next run, and continues with later writes. An edit that only retries the assignment is marked
+  `assign only`.
+
 ## [0.4.1] - 2026-11-02
 
 - **More env templates.** `env.example` without the leading dot and `NAME.example.env` files are read as env templates

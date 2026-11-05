@@ -20,8 +20,8 @@ export interface Desired {
 }
 
 export type Action =
-  | { do: "create"; marker: string; title: string }
-  | { do: "edit"; marker: string; number: number; title: string }
+  | { do: "create"; marker: string; title: string; unassigned?: string }
+  | { do: "edit"; marker: string; number: number; title: string; assignOnly?: true; unassigned?: string }
   | { do: "close"; marker: string; number: number; title: string };
 
 const markerPattern = /<!-- tally:(\S+) -->/;
@@ -64,6 +64,8 @@ function rotationSteps(entry: Entry): string[] {
 /** One issue per action finding, plus one digest for every gap. */
 export function desiredIssues(findings: readonly Finding[], entries: readonly Entry[]): Desired[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  // gh always rejects an organization assignee, and the org-owner gap already reports it, so no retry each run.
+  const orgOwned = new Set(findings.filter((finding) => finding.kind === "org-owner").map((finding) => finding.key));
   const desired: Desired[] = [];
   for (const finding of findings) {
     if (finding.severity !== "action") continue;
@@ -74,7 +76,7 @@ export function desiredIssues(findings: readonly Finding[], entries: readonly En
       title: finding.title,
       labels: [label, `tally:${finding.kind}`],
       severity: "action",
-      assignee: entry?.owner === "unknown" ? undefined : entry?.owner,
+      assignee: entry?.owner === "unknown" || orgOwned.has(finding.key) ? undefined : entry?.owner,
       body: entry
         ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
         : [header, finding.detail ?? finding.title].join("\n\n"),
@@ -115,13 +117,14 @@ interface Open {
 }
 
 /**
- * One gh call. `assign` names an owner to add afterwards as a separate, best-effort call: an owner who is not a
- * collaborator must not stop the issue being filed, and a failed create is never retried, so it can never file twice.
+ * One gh call. `assign` names an owner to add afterwards, and `number` identifies an existing issue or the issue
+ * created by this write. The action records an assignment failure without stopping later writes.
  */
 interface Write {
   args: string[];
   assign?: string;
-  bestEffort?: boolean;
+  number?: string;
+  action: Action;
 }
 
 /** gh pages through results up to this; far above any tally file, so every open tally issue is seen. */
@@ -169,7 +172,8 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
   for (const want of desired) {
     const existing = byMarker.get(want.marker);
     if (!existing) {
-      actions.push({ do: "create", marker: want.marker, title: want.title });
+      const action: Action = { do: "create", marker: want.marker, title: want.title };
+      actions.push(action);
       addLabels(want, want.labels);
       const call = [
         "issue",
@@ -181,17 +185,32 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
         want.body,
         ...want.labels.flatMap((name) => ["--label", name]),
       ];
-      writes.push({ args: call, assign: want.assignee });
+      writes.push({ args: call, assign: want.assignee, action });
       continue;
     }
     const current = (existing.labels ?? []).map((item) => item.name);
     const stale = current.filter((name) => name.startsWith("tally:") && !want.labels.includes(name));
     const missing = want.labels.filter((name) => !current.includes(name));
-    if (existing.title === want.title && existing.body.trim() === want.body.trim() && !stale.length && !missing.length)
-      continue;
     // The body names the owner, so an owner change always lands here and the new owner is added.
-    const assigned = (existing.assignees ?? []).some((item) => item.login.toLowerCase() === want.assignee);
-    actions.push({ do: "edit", marker: want.marker, number: existing.number, title: want.title });
+    const assigned =
+      want.assignee === undefined ||
+      (existing.assignees ?? []).some((item) => item.login.toLowerCase() === want.assignee?.toLowerCase());
+    const unchanged =
+      existing.title === want.title && existing.body.trim() === want.body.trim() && !stale.length && !missing.length;
+    if (unchanged && assigned) continue;
+    const action: Action = {
+      do: "edit",
+      marker: want.marker,
+      number: existing.number,
+      title: want.title,
+      ...(unchanged ? { assignOnly: true as const } : {}),
+    };
+    actions.push(action);
+    const assign = assigned ? {} : { assign: want.assignee, number: String(existing.number) };
+    if (unchanged) {
+      writes.push({ args: [], ...assign, action });
+      continue;
+    }
     addLabels(want, missing);
     writes.push({
       args: [
@@ -206,12 +225,9 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
         ...missing.flatMap((name) => ["--add-label", name]),
         ...stale.flatMap((name) => ["--remove-label", name]),
       ],
+      ...assign,
+      action,
     });
-    if (want.assignee && !assigned)
-      writes.push({
-        args: ["issue", "edit", String(existing.number), ...at, "--add-assignee", want.assignee],
-        bestEffort: true,
-      });
   }
 
   const wanted = new Set(desired.map((want) => want.marker));
@@ -226,24 +242,26 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
     })),
   ];
   for (const { marker, issue, why } of closing) {
-    actions.push({ do: "close", marker, number: issue.number, title: issue.title });
-    writes.push({ args: ["issue", "close", String(issue.number), ...at, "--comment", why] });
+    const action: Action = { do: "close", marker, number: issue.number, title: issue.title };
+    actions.push(action);
+    writes.push({ args: ["issue", "close", String(issue.number), ...at, "--comment", why], action });
   }
 
   if (!dryRun) {
-    // Labels are created only when this run attaches them, so a quiet day makes no writes at all.
+    // Labels are created only when this run attaches them, so a quiet day makes no writes beyond pending assignments.
     for (const [name, color] of usedLabels) await gh(["label", "create", name, ...at, "--color", color, "--force"]);
-    const assign = (number: string, owner: string) =>
-      gh(["issue", "edit", number, ...at, "--add-assignee", owner]).catch(() => "");
     for (const write of writes) {
-      if (write.bestEffort) {
-        await gh(write.args).catch(() => "");
-        continue;
-      }
-      const output = await gh(write.args);
+      const output = write.args.length > 0 ? await gh(write.args) : "";
       // `issue create` prints the new issue's URL, which ends in its number.
-      const number = /\/issues\/(\d+)\s*$/.exec(output)?.[1];
-      if (write.assign && number) await assign(number, write.assign);
+      const number = write.number ?? /\/issues\/(\d+)\s*$/.exec(output)?.[1];
+      if (write.assign && number) {
+        try {
+          await gh(["issue", "edit", number, ...at, "--add-assignee", write.assign]);
+        } catch (error) {
+          if (write.action.do !== "close")
+            write.action.unassigned = `${write.assign}: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
     }
   }
   return actions;

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Entry } from "../src/schema";
-import { findTallyFile, loadTallyFile, writeTallyFile } from "../src/tallyfile";
+import { findTallyFile, loadTallyFile, userTallyFile, writeTallyFile } from "../src/tallyfile";
 
 function temp(): string {
   return mkdtempSync(join(tmpdir(), "tally-file-"));
@@ -98,6 +98,15 @@ describe("loadTallyFile", () => {
     const { errors, entries } = await loadTallyFile(join(temp(), ".tally.yaml"));
     expect(entries).toEqual([]);
     expect(errors[0]?.message).toContain("tally init");
+  });
+
+  test("a missing user fallback explains that there is no repository", async () => {
+    const root = temp();
+    const path = userTallyFile({ XDG_CONFIG_HOME: root });
+    const { errors } = await loadTallyFile(path, { fallback: true });
+    expect(errors[0]?.message).toBe(
+      "no repository found here, and the user-level tally file does not exist yet; create it with `tally init` or `tally add`",
+    );
   });
 
   test("unknown top-level keys are errors", async () => {

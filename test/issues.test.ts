@@ -63,6 +63,18 @@ describe("desiredIssues", () => {
     expect(want?.body).toContain("tally rotated payments-api");
   });
 
+  test("an organization owner is not named as assignee", () => {
+    const orgOwner: Finding = {
+      id: "gap:payments-api:owner",
+      kind: "org-owner",
+      severity: "gap",
+      key: "payments-api",
+      title: "org",
+    };
+    const [want] = desiredIssues([expired, orgOwner], [entry()]);
+    expect(want?.assignee).toBeUndefined();
+  });
+
   test("a finding with no entry uses its title and detail instead of a table", () => {
     const want = only(desiredIssues([unregistered], []));
     expect(want.assignee).toBeUndefined();
@@ -131,6 +143,9 @@ describe("syncIssues", () => {
     const { calls, gh } = fakeGh([], (args) => args.includes("--add-assignee"));
     const actions = await syncIssues(gh, "owner/repo", desiredIssues([expired], [entry()]), false);
     expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      unassigned: "team-payments: gh issue create failed: not a collaborator",
+    });
     expect(writes(calls).filter((args) => args[1] === "create")).toHaveLength(1);
   });
 
@@ -148,13 +163,51 @@ describe("syncIssues", () => {
     expect(actions).toEqual([{ do: "edit", marker: "expiry:payments-api", number: 7, title: expired.title }]);
   });
 
+  test("reports a failed assignment after editing the issue", async () => {
+    const { gh } = fakeGh([{ number: 7, title: "stale title", body: "<!-- tally:expiry:payments-api -->" }], (args) =>
+      args.includes("--add-assignee"),
+    );
+    const actions = await syncIssues(gh, "owner/repo", desiredIssues([expired], [entry()]), false);
+    expect(actions).toEqual([
+      {
+        do: "edit",
+        marker: "expiry:payments-api",
+        number: 7,
+        title: expired.title,
+        unassigned: "team-payments: gh issue create failed: not a collaborator",
+      },
+    ]);
+  });
+
   test("makes no write when the issue is unchanged", async () => {
     const want = only(desiredIssues([expired], [entry()]));
     const labels = want.labels.map((name) => ({ name }));
-    const { calls, gh } = fakeGh([{ number: 7, title: want.title, body: want.body, labels }]);
+    const { calls, gh } = fakeGh([
+      { number: 7, title: want.title, body: want.body, labels, assignees: [{ login: "team-payments" }] },
+    ]);
     const actions = await syncIssues(gh, "owner/repo", [want], false);
     expect(actions).toEqual([]);
     expect(writes(calls)).toEqual([]);
+  });
+
+  test("retries an assignment for an unchanged unassigned issue", async () => {
+    const want = only(desiredIssues([expired], [entry()]));
+    const labels = want.labels.map((name) => ({ name }));
+    const { calls, gh } = fakeGh([{ number: 7, title: want.title, body: want.body, labels, assignees: [] }], (args) =>
+      args.includes("--add-assignee"),
+    );
+    const actions = await syncIssues(gh, "owner/repo", [want], false);
+    expect(actions).toEqual([
+      {
+        do: "edit",
+        marker: "expiry:payments-api",
+        number: 7,
+        title: expired.title,
+        assignOnly: true,
+        unassigned: "team-payments: gh issue create failed: not a collaborator",
+      },
+    ]);
+    expect(writes(calls)).toEqual([["issue", "edit", "7", "--repo", "owner/repo", "--add-assignee", "team-payments"]]);
   });
 
   test("closes an open issue whose marker is no longer wanted", async () => {
@@ -198,7 +251,13 @@ describe("syncIssues edge cases", () => {
     const [want] = desiredIssues([expired], [entry()]);
     if (!want) throw new Error("expected one desired issue");
     const { calls, gh } = fakeGh([
-      { number: 1, title: want.title, body: want.body, labels: want.labels.map((name) => ({ name })) },
+      {
+        number: 1,
+        title: want.title,
+        body: want.body,
+        labels: want.labels.map((name) => ({ name })),
+        assignees: [{ login: "team-payments" }],
+      },
     ]);
     expect(await syncIssues(gh, "o/r", [want], false)).toEqual([]);
     expect(calls.filter((args) => args[0] !== "issue" || args[1] !== "list")).toEqual([]);

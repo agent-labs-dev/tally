@@ -100,12 +100,17 @@ export function freshConfig(): Config {
  * Read one `.tally.yaml`. The raw text is scanned before parsing, because YAML comments and quoting never reach the
  * parsed entry, and the secret patterns it declares are registered before any entry is validated.
  */
-export async function loadTallyFile(path: string): Promise<LoadedTallyFile> {
+export async function loadTallyFile(path: string, options: { fallback?: boolean } = {}): Promise<LoadedTallyFile> {
   const config = freshConfig();
   const errors: LoadProblem[] = [];
   if (!existsSync(path)) {
     addSecretPatterns(config.secretPatterns);
-    errors.push({ path, message: "no tally file here, so create one with `tally init` or `tally add`" });
+    errors.push({
+      path,
+      message: options.fallback
+        ? "no repository found here, and the user-level tally file does not exist yet; create it with `tally init` or `tally add`"
+        : "no tally file here, so create one with `tally init` or `tally add`",
+    });
     return { config, entries: [], errors };
   }
   const text = await Bun.file(path).text();
@@ -260,6 +265,10 @@ export function findTallyFile(cwd: string, env: Record<string, string | undefine
     if (parent === dir) break;
     dir = parent;
   }
+  return userTallyFile(env);
+}
+
+export function userTallyFile(env: Record<string, string | undefined> = {}): string {
   const configHome = env.XDG_CONFIG_HOME ?? join(env.HOME ?? homedir(), ".config");
   return join(configHome, "tally", "tally.yaml");
 }
