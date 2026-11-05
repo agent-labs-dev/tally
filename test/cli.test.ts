@@ -25,6 +25,10 @@ function harness() {
   const root = mkdtempSync(join(tmpdir(), "tally-cli-"));
   mkdirSync(join(root, ".git"));
   const config = join(root, ".tally.yaml");
+  const defaultRun: Run = async (argv) => {
+    if (argv[0] === "gh" && argv[1] === "api" && argv[3] === ".type" && argv[4]?.startsWith("users/")) return "User\n";
+    throw new Error(`unexpected store command ${argv.join(" ")}`);
+  };
   const run = async (args: string[], options: RunOptions = {}): Promise<Reply> => {
     const out: string[] = [];
     const code = await main(args, {
@@ -33,7 +37,7 @@ function harness() {
       cwd: root,
       gh: options.gh,
       notify: options.notify,
-      run: options.run,
+      run: options.run ?? defaultRun,
       stdout: (text: string) => out.push(text),
     });
     const text = out.join("\n");
@@ -152,11 +156,15 @@ describe("cli", () => {
     const calls: string[][] = [];
     const store: Run = async (argv) => {
       calls.push(argv);
+      if (argv[0] === "gh") return "User\n";
       return JSON.stringify({ SecretList: [{ Name: "payments/api", LastChangedDate: "2020-01-01T00:00:00Z" }] });
     };
     const result = await run(["check", "--today", "2026-11-02"], { run: store });
     expect(result.code).toBe(3);
-    expect((result.json.findings as { id: string }[]).map((finding) => finding.id)).toEqual(["stale:payments-api"]);
+    expect((result.json.findings as { id: string }[]).map((finding) => finding.id)).toEqual([
+      "stale:payments-api",
+      "gap:payments-api:owner",
+    ]);
     expect((await run(["check", "--offline", "--today", "2026-11-02"], { run: store })).code).toBe(0);
     expect(calls).toHaveLength(1);
     expect((await run(["issues", "sync", "--offline"], { run: store })).code).toBe(2);
@@ -186,9 +194,27 @@ describe("cli", () => {
     const result = await run(["check", "--today", "2026-11-02"], { isTTY: true });
     expect(result.code).toBe(3);
     const lines = result.text.split("\n");
-    expect(lines[0]).toContain("expired");
-    expect(lines[0]).toContain("old-key");
+    expect(lines[0]).toContain("SEVERITY");
+    expect(lines[0]).toContain("KIND");
+    expect(lines[0]).toContain("FINDING");
+    expect(lines[1]).toContain("expired");
+    expect(lines[1]).toContain("old-key");
+    expect(lines[1]?.indexOf("action")).toBe(lines[0]?.indexOf("SEVERITY"));
+    expect(lines[1]?.indexOf("expired")).toBe(lines[0]?.indexOf("KIND"));
+    expect(lines[1]?.indexOf("old-key")).toBe(lines[0]?.indexOf("FINDING"));
     expect(result.text).toContain("next: tally rotated");
+  });
+
+  test("help is text when stdout is not a terminal", async () => {
+    const { run } = harness();
+    const result = await run(["--help"]);
+    expect(result.text.startsWith("tally")).toBe(true);
+  });
+
+  test("help is JSON when --json is explicit", async () => {
+    const { run } = harness();
+    const result = await run(["--help", "--json"]);
+    expect(result.json.help).toBeString();
   });
 
   test("check reports tally file errors and exits 1", async () => {
@@ -324,7 +350,8 @@ describe("init", () => {
       { name: "DATABASE_URL" },
       { name: "BUILD_ID" },
     ];
-    const store: Run = async (argv) => JSON.stringify(argv.includes("versions") ? [] : listing);
+    const store: Run = async (argv) =>
+      argv[0] === "gh" ? "User\n" : JSON.stringify(argv.includes("versions") ? [] : listing);
 
     const result = await run(["init", "--owner", "team-mail"], { run: store });
     expect(result.code).toBe(0);

@@ -31,6 +31,8 @@ export interface Context {
   sources?: Source[];
   /** What those stores hold: names and dates, never values. */
   observed?: Observation[];
+  /** GitHub owner types, when owner lookups were allowed. Organization owners cannot receive issue assignments. */
+  owners?: Map<string, string>;
   /** Secret names the repository references, or undefined outside a checkout. Both scan rules stay quiet then. */
   referenced?: Map<string, string[]>;
   /** Credential-named variables the code reads from its env templates, or undefined outside a git checkout. */
@@ -193,6 +195,36 @@ export const limitRule: Rule = (entries, { observed }) =>
         },
       ];
     return [];
+  });
+
+export const unknownFactsRule: Rule = (entries, { owners }) =>
+  entries.flatMap((entry): Finding[] => {
+    const findings: Finding[] = [];
+    if (entry.service === "unknown")
+      findings.push({
+        id: `gap:${entry.id}:service`,
+        kind: "unknown-service",
+        severity: "gap",
+        key: entry.id,
+        title: `${entry.id} has no recorded service`,
+      });
+    if (entry.owner === "unknown")
+      findings.push({
+        id: `gap:${entry.id}:owner`,
+        kind: "unknown-owner",
+        severity: "gap",
+        key: entry.id,
+        title: `${entry.id} has no recorded owner`,
+      });
+    else if (owners?.get(entry.owner) === "Organization")
+      findings.push({
+        id: `gap:${entry.id}:owner`,
+        kind: "org-owner",
+        severity: "gap",
+        key: entry.id,
+        title: `${entry.id} is owned by organization ${entry.owner}, which cannot be assigned an issue`,
+      });
+    return findings;
   });
 
 /** The last segment of any location's ref, which is the variable or secret name in every store convention. */
@@ -358,6 +390,7 @@ export const idleRule: Rule = (entries, { today, idleDays = 90, observed }) =>
 export const defaultRules: Rule[] = [
   expiryRule,
   limitRule,
+  unknownFactsRule,
   unregisteredRule,
   unusedRule,
   staleRule,

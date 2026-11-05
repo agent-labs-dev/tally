@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { type Api, apiGet, type Fetch, isMetadataCommand, observe, type Run, runCommand, stores } from "../src/stores";
+import {
+  type Api,
+  apiGet,
+  type Fetch,
+  isMetadataCommand,
+  observe,
+  ownerTypes,
+  type Run,
+  runCommand,
+  stores,
+} from "../src/stores";
 
 /** A fake store CLI: answers by the command's first words and records every call. */
 function fake(answers: Record<string, unknown>) {
@@ -353,14 +363,39 @@ describe("github reader", () => {
   test("gh is allowed only as an exact listing, never with a flag that could write", () => {
     const ok = ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/secrets?per_page=100"];
     expect(isMetadataCommand(ok)).toBe(true);
+    expect(isMetadataCommand(["gh", "api", "--jq", ".type", "users/team-payments"])).toBe(true);
     for (const argv of [
       [...ok, "-X", "PUT"],
       ["gh", "api", "-X", "DELETE", "--jq", secrets, "repos/acme/app/actions/secrets?per_page=100"],
       ["gh", "api", "--paginate", "--jq", ".", "repos/acme/app/actions/secrets?per_page=100"],
       ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/secrets/NAME?per_page=100"],
       ["gh", "api", "--paginate", "--jq", secrets, "repos/acme/app/actions/runners?per_page=100"],
+      ["gh", "api", "--jq", ".type", "users/team/payments"],
+      ["gh", "api", "--jq", ".type", "users/team-payments", "extra"],
       ["gh", "secret", "set", "NAME"],
     ])
       expect(isMetadataCommand(argv)).toBe(false);
+  });
+
+  test("ownerTypes deduplicates owners and ignores lookup failures", async () => {
+    const calls: string[][] = [];
+    const run: Run = async (argv) => {
+      calls.push(argv);
+      if (argv[4] === "users/team-payments") return "User\n";
+      if (argv[4] === "users/org-owner") return "Organization\n";
+      throw new Error("not found");
+    };
+    const types = await ownerTypes(["team-payments", "unknown", "team-payments", "org-owner", "missing"], run);
+    expect(types).toEqual(
+      new Map([
+        ["team-payments", "User"],
+        ["org-owner", "Organization"],
+      ]),
+    );
+    expect(calls).toEqual([
+      ["gh", "api", "--jq", ".type", "users/team-payments"],
+      ["gh", "api", "--jq", ".type", "users/org-owner"],
+      ["gh", "api", "--jq", ".type", "users/missing"],
+    ]);
   });
 });

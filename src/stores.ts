@@ -79,12 +79,15 @@ const ghSecretsJq = ".secrets[] | [.name, .updated_at] | @tsv";
 const ghEnvironmentsJq = ".environments[].name | @uri";
 const ghPath =
   /^(repos\/[\w.-]+\/[\w.-]+\/(actions\/secrets|environments|environments\/[\w.~%-]+\/secrets)|orgs\/[\w.-]+\/actions\/secrets)\?per_page=100$/;
+const ghOwnerPath = /^users\/[A-Za-z0-9-]+$/;
 
 /**
  * Whether argv is an allowed listing. A store CLI takes its subcommand from the leading words above. `gh api` is
  * matched whole instead, because any extra argument, such as `-X` or `-f`, could turn a listing into a write.
  */
 export function isMetadataCommand(argv: readonly string[]): boolean {
+  if (argv[0] === "gh" && argv.length === 5 && argv[1] === "api" && argv[2] === "--jq" && argv[3] === ".type")
+    return ghOwnerPath.test(argv[4] ?? "");
   if (argv[0] === "gh")
     return (
       argv.length === 6 &&
@@ -95,6 +98,20 @@ export function isMetadataCommand(argv: readonly string[]): boolean {
       ghPath.test(argv[5] ?? "")
     );
   return metadataCommands.some((words) => words.every((word, at) => argv[at] === word));
+}
+
+/** Looks up GitHub owner types, leaving out owners whose lookup fails because gh is unavailable or access is denied. */
+export async function ownerTypes(owners: Iterable<string>, run: Run): Promise<Map<string, string>> {
+  const types = new Map<string, string>();
+  for (const owner of new Set(owners)) {
+    if (owner === "unknown") continue;
+    try {
+      types.set(owner, (await run(["gh", "api", "--jq", ".type", `users/${owner}`])).trim());
+    } catch {
+      // An owner lookup is advisory. A failed lookup must not make a check fail or invent an owner type.
+    }
+  }
+  return types;
 }
 
 function day(value: unknown): string | undefined {

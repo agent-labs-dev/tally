@@ -6,13 +6,14 @@ import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
 import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
 import { referencedSecrets, skipping, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
-import { type Fetch, observe, type Run, runCommand } from "./stores";
+import { type Fetch, observe, ownerTypes, type Run, runCommand } from "./stores";
 import {
   type Config,
   findTallyFile,
   freshConfig,
   type LoadedTallyFile,
   loadTallyFile,
+  userTallyFile,
   writeTallyFile,
 } from "./tallyfile";
 
@@ -20,7 +21,7 @@ import {
 export const exit = { ok: 0, error: 1, usage: 2, findings: 3 } as const;
 
 const help = `tally tracks a repository's API keys: owner, where each one is stored, its limit and its expiry. It never reads, stores or prints a key.
-Output is JSON when stdout is not a terminal or with --json.
+Commands print JSON when stdout is not a terminal or with --json. Help and version print text unless --json is given.
 
   tally init [--owner HANDLE] [--offline]
                                  write .tally.yaml, or add to it: a draft entry per secret the workflows, env templates
@@ -176,7 +177,8 @@ function configPath(flags: Flags, env: Record<string, string | undefined>, cwd: 
 /** The config loads with the entries: its secret patterns have to be registered before any entry is checked. */
 async function loadAll(flags: Flags, env: Record<string, string | undefined>, cwd: string) {
   const path = configPath(flags, env, cwd);
-  const loaded = await loadTallyFile(path);
+  const fallback = flags.config === undefined && env.TALLY_CONFIG === undefined && path === userTallyFile(env);
+  const loaded = await loadTallyFile(path, { fallback });
   return { path, ...loaded };
 }
 
@@ -196,7 +198,7 @@ function scannedRepo(root: string, env: Record<string, string | undefined>): str
  */
 async function buildContext(
   flags: Flags,
-  loaded: { path: string; config: Config },
+  loaded: { path: string; config: Config; entries: Entry[] },
   env: Record<string, string | undefined>,
   io: IO,
 ): Promise<Context> {
@@ -214,6 +216,12 @@ async function buildContext(
     repo: scannedRepo(root, env),
     sources,
     observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand, io.fetch ?? fetch, env) : undefined,
+    owners: flags.offline
+      ? undefined
+      : await ownerTypes(
+          loaded.entries.map((entry) => entry.owner),
+          io.run ?? runCommand,
+        ),
   };
 }
 
@@ -255,18 +263,44 @@ function location(value: string): Location {
   return { kind: value.slice(0, colon), ref: value.slice(colon + 1) };
 }
 
-function findingLine(finding: Finding): string {
-  const days = finding.days === undefined ? "" : ` (${finding.days} days)`;
-  return `${finding.severity.padEnd(6)} ${finding.kind} ${finding.title}${days}`;
+function table(header: string[], rows: string[][]): string {
+  const widths = header.map((cell, column) => Math.max(cell.length, ...rows.map((row) => row[column]?.length ?? 0)));
+  return [header, ...rows]
+    .map((row) =>
+      row
+        .map((cell, column) => cell.padEnd(widths[column] ?? cell.length))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
 }
 
 /** reconcile already puts action findings first. */
 function findingsText(findings: readonly Finding[]): string {
-  return findings.length === 0 ? "no findings" : findings.map(findingLine).join("\n");
+  if (findings.length === 0) return "no findings";
+  return table(
+    ["SEVERITY", "KIND", "FINDING"],
+    findings.map((finding) => [
+      finding.severity,
+      finding.kind,
+      `${finding.title}${finding.days === undefined ? "" : ` (${finding.days} days)`}`,
+    ]),
+  );
 }
 
-function entryLine(entry: Entry): string {
-  return `${entry.id}  ${entry.service}  ${entry.group ?? "-"}  ${entry.owner}  expires ${entry.expires}  limit ${entry.limit}`;
+function entriesText(entries: readonly Entry[]): string {
+  if (entries.length === 0) return "no entries";
+  return table(
+    ["ID", "SERVICE", "GROUP", "OWNER", "EXPIRES", "LIMIT"],
+    entries.map((entry) => [
+      entry.id,
+      entry.service,
+      entry.group ?? "-",
+      entry.owner,
+      entry.expires || "-",
+      entry.limit || "-",
+    ]),
+  );
 }
 
 /** A desktop notification, only when the desktop has a notifier on PATH. */
@@ -364,7 +398,7 @@ async function dispatch(
           (flags.group === undefined || entry.group === flags.group) &&
           (flags.service === undefined || entry.service === flags.service),
       );
-      return { value: { entries }, text: entries.map(entryLine).join("\n") || "no entries" };
+      return { value: { entries }, text: entriesText(entries) };
     }
     case "validate": {
       expectNoArgs(rest, command);
@@ -437,7 +471,11 @@ async function dispatch(
       const findings = reconcile(loaded.entries, context);
       const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, loaded.entries), flags.dryRun);
       const text = actions
-        .map((action) => `${action.do} ${action.marker}${"number" in action ? ` #${action.number}` : ""}`)
+        .map((action) => {
+          const unassigned = action.do !== "close" && action.unassigned ? ` (not assigned: ${action.unassigned})` : "";
+          const assignOnly = action.do === "edit" && action.assignOnly ? " (assign only)" : "";
+          return `${action.do} ${action.marker}${"number" in action ? ` #${action.number}` : ""}${assignOnly}${unassigned}`;
+        })
         .join("\n");
       return { value: { repo: repo ?? null, dryRun: flags.dryRun, actions }, text: text || "no changes" };
     }
@@ -472,9 +510,10 @@ export async function main(args: string[], io: IO = {}): Promise<number> {
   const cwd = io.cwd ?? process.cwd();
   const write = io.stdout ?? ((text: string) => process.stdout.write(`${text}\n`));
   const isTTY = io.isTTY ?? process.stdout.isTTY;
-  const json = !isTTY || args.includes("--json");
+  let json = !isTTY || args.includes("--json");
   try {
     const flags = parse(args);
+    if (flags.help || flags.version) json = flags.json;
     if (flags.help) {
       write(json ? JSON.stringify({ help }) : help);
       return exit.ok;
