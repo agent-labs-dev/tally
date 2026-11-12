@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import packageJson from "../package.json";
 import { draft } from "./draft";
 import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
-import { type Context, type Finding, reconcile, todayUtc } from "./reconcile";
+import { type Context, type Finding, reconcile, resolveEntries, todayUtc } from "./reconcile";
 import { referencedSecrets, skipping, templatedSecrets } from "./scan";
 import { type Entry, type Location, schemaVersion, validDate, withheld } from "./schema";
 import { type Fetch, observe, ownerTypes, type Run, runCommand } from "./stores";
@@ -201,11 +201,16 @@ async function buildContext(
   loaded: { path: string; config: Config; entries: Entry[] },
   env: Record<string, string | undefined>,
   io: IO,
-): Promise<Context> {
+): Promise<{ context: Context; entries: Entry[] }> {
   const root = repositoryRoot(dirname(loaded.path));
   const sources = flags.offline ? [] : loaded.config.sources;
   const skip = skipping(loaded.config.ignorePaths);
-  return {
+  const repo = scannedRepo(root, env);
+  const observed =
+    sources.length > 0 ? await observe(sources, io.run ?? runCommand, io.fetch ?? fetch, env) : undefined;
+  // The stores complete unknown facts before anything reads an owner, so lookups, findings and issues agree.
+  const entries = resolveEntries(loaded.entries, observed, repo);
+  const context: Context = {
     today: flags.today ?? todayUtc(),
     warnDays: loaded.config.warnDays,
     staleDays: loaded.config.staleDays,
@@ -213,16 +218,17 @@ async function buildContext(
     referenced: referencedSecrets(root, skip),
     templated: templatedSecrets(root, loaded.config.credentialNames, skip),
     ignore: loaded.config.ignore,
-    repo: scannedRepo(root, env),
+    repo,
     sources,
-    observed: sources.length > 0 ? await observe(sources, io.run ?? runCommand, io.fetch ?? fetch, env) : undefined,
+    observed,
     owners: flags.offline
       ? undefined
       : await ownerTypes(
-          loaded.entries.map((entry) => entry.owner),
+          entries.map((entry) => entry.owner),
           io.run ?? runCommand,
         ),
   };
+  return { context, entries };
 }
 
 async function report(
@@ -231,14 +237,14 @@ async function report(
   env: Record<string, string | undefined>,
   io: IO,
 ): Promise<Report> {
-  const context = await buildContext(flags, loaded, env, io);
+  const { context, entries } = await buildContext(flags, loaded, env, io);
   return {
     path: loaded.path,
     repo: context.repo,
     today: context.today,
     warnDays: context.warnDays,
-    entries: loaded.entries,
-    findings: reconcile(loaded.entries, context),
+    entries,
+    findings: reconcile(entries, context),
   };
 }
 
@@ -342,7 +348,7 @@ async function dispatch(
         ? { path, ...(await loadTallyFile(path)) }
         : { path, config: freshConfig(), entries: [], errors: [] };
       if (loaded.errors.length > 0) return failed(loaded.errors);
-      const context = await buildContext(flags, loaded, env, io);
+      const { context } = await buildContext(flags, loaded, env, io);
       const plan = draft(loaded.entries, context, flags.owner ?? "unknown");
       await writeTallyFile(path, loaded.config, plan.entries);
       const lines = [
@@ -361,8 +367,8 @@ async function dispatch(
       expectNoArgs(rest, command);
       const loaded = await loadAll(flags, env, cwd);
       if (loaded.errors.length > 0) return failed(loaded.errors);
-      const context = await buildContext(flags, loaded, env, io);
-      const findings = reconcile(loaded.entries, context);
+      const { context, entries } = await buildContext(flags, loaded, env, io);
+      const findings = reconcile(entries, context);
       const summary = {
         action: findings.filter((finding) => finding.severity === "action").length,
         gap: findings.filter((finding) => finding.severity === "gap").length,
@@ -467,9 +473,9 @@ async function dispatch(
       if (loaded.errors.length > 0) return failed(loaded.errors);
       // With no repo at all, gh infers it from the working directory.
       const repo = flags.repo ?? loaded.config.issueRepo ?? env.GITHUB_REPOSITORY;
-      const context = await buildContext(flags, loaded, env, io);
-      const findings = reconcile(loaded.entries, context);
-      const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, loaded.entries), flags.dryRun);
+      const { context, entries } = await buildContext(flags, loaded, env, io);
+      const findings = reconcile(entries, context);
+      const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, entries), flags.dryRun);
       const text = actions
         .map((action) => {
           const unassigned = action.do !== "close" && action.unassigned ? ` (not assigned: ${action.unassigned})` : "";

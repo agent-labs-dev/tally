@@ -24,25 +24,75 @@ function fake(answers: Record<string, unknown>) {
 }
 
 describe("store readers", () => {
-  test("gcp reads each secret's newest enabled version and its expiry", async () => {
+  test("gcp reads versions, treats expireTime as deletion and reads tally annotations", async () => {
     const { calls, run } = fake({
       "gcloud secrets list": [
         {
           name: "projects/1/secrets/PAYMENTS_API_KEY",
           createTime: "2024-01-01T00:00:00Z",
           expireTime: "2027-03-01T00:00:00Z",
+          rotation: { nextRotationTime: "2026-02-01T00:00:00Z" },
+          annotations: {
+            "tally-owner": "team-payments",
+            "tally-service": "example-provider",
+            "tally-expires": "2026-09-09",
+            "tally-limit": "$50 per monthly",
+            "tally-runbook": "docs/rotate.md",
+            unrelated: "ignored",
+          },
         },
-        { name: "projects/1/secrets/MAIL_TOKEN", createTime: "2025-05-05T00:00:00Z" },
+        {
+          name: "projects/1/secrets/MAIL_TOKEN",
+          createTime: "2025-05-05T00:00:00Z",
+          annotations: { "tally-expires": "none", "tally-expires-note": "set by the vendor" },
+        },
       ],
       "gcloud secrets versions list PAYMENTS_API_KEY": [{ createTime: "2026-06-01T10:00:00Z" }],
       "gcloud secrets versions list MAIL_TOKEN": [],
     });
     const observed = await observe([{ kind: "gcp", scope: "my-project", filter: "labels.app=web" }], run);
     expect(observed).toEqual([
-      { kind: "gcp", scope: "my-project", name: "PAYMENTS_API_KEY", changed: "2026-06-01", expires: "2027-03-01" },
-      { kind: "gcp", scope: "my-project", name: "MAIL_TOKEN", changed: "2025-05-05", expires: undefined },
+      {
+        kind: "gcp",
+        scope: "my-project",
+        name: "PAYMENTS_API_KEY",
+        changed: "2026-06-01",
+        deletion: "2027-03-01",
+        owner: "team-payments",
+        service: "example-provider",
+        expires: "2026-09-09",
+        limit: "$50 per monthly",
+        runbook: "docs/rotate.md",
+      },
+      {
+        kind: "gcp",
+        scope: "my-project",
+        name: "MAIL_TOKEN",
+        changed: "2025-05-05",
+        expires: "none",
+        expiresNote: "set by the vendor",
+      },
     ]);
     expect(calls[0]).toContain("--filter=labels.app=web");
+  });
+
+  test("gcp rejects bad or credential-shaped annotations without echoing them", async () => {
+    const secret = ["sk", "invalid-example-fixture"].join("-");
+    for (const annotations of [
+      { "tally-expires": "next week" },
+      { "tally-expires": "none" },
+      { "tally-owner": "Not A Handle" },
+      { "tally-runbook": secret },
+    ]) {
+      const { run } = fake({
+        "gcloud secrets list": [{ name: "projects/1/secrets/KEY", annotations }],
+        "gcloud secrets versions list": [],
+      });
+      const failure = await observe([{ kind: "gcp", scope: "p" }], run).catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("invalid tally annotations");
+      expect((failure as Error).message).not.toContain(secret);
+    }
   });
 
   test("aws prefers the last rotation and skips deleted secrets", async () => {

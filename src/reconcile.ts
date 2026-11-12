@@ -124,16 +124,64 @@ function observedOr(
   entry: Entry,
   observed: readonly Observation[] | undefined,
   field: "expires" | "limit",
+  repo?: string,
 ): { value: string; reported: boolean } {
   if (recorded !== "unknown") return { value: recorded, reported: false };
-  const values = observationsOf(entry, observed).flatMap((observation) => observation[field] ?? []);
+  const values = observationsOf(entry, observed, repo).flatMap((observation) => observation[field] ?? []);
+  if (field === "limit" && new Set(values).size > 1)
+    throw new Error(`${entry.id} has conflicting observed limit values; record one in the tally file`);
   const [first] = values.filter((value) => value !== "none").sort();
   return { value: first ?? (values.length ? "none" : "unknown"), reported: true };
 }
 
-export const expiryRule: Rule = (entries, { today, warnDays, observed }): Finding[] =>
+/**
+ * The entries as the stores complete them: an `unknown` owner, service or limit, and an absent runbook, take the one
+ * value the stores report; a known value in the file always wins. Two stores that disagree fail rather than pick one.
+ * Expiry takes the earliest observed date, or a `none` that the store gave a reason for. Nothing here is written back.
+ */
+export function resolveEntries(
+  entries: readonly Entry[],
+  observed: readonly Observation[] | undefined,
+  repo?: string,
+): Entry[] {
+  if (!observed?.length) return [...entries];
+  return entries.map((entry) => {
+    const seen = observationsOf(entry, observed, repo);
+    const one = (field: "owner" | "service" | "runbook" | "limit" | "expiresNote", from = seen) => {
+      const values = [...new Set(from.flatMap((observation) => observation[field] ?? []))];
+      if (values.length > 1)
+        throw new Error(`${entry.id} has conflicting observed ${field} values; record one in the tally file`);
+      return values[0];
+    };
+    const resolved = { ...entry };
+    if (entry.owner === "unknown") resolved.owner = one("owner") ?? entry.owner;
+    if (entry.service === "unknown") resolved.service = one("service") ?? entry.service;
+    if (!entry.runbook) resolved.runbook = one("runbook");
+    // GCP annotations are recorded facts; an API reporting no limit still raises a gap.
+    if (entry.limit === "unknown") {
+      const limit = one("limit");
+      if (
+        limit &&
+        (limit !== "none" || seen.some((observation) => observation.kind === "gcp" && observation.limit === "none"))
+      )
+        resolved.limit = limit;
+    }
+    if (entry.expires === "unknown") {
+      const dates = seen.flatMap((observation) => observation.expires ?? []).filter((value) => value !== "none");
+      const never = seen.filter((observation) => observation.expires === "none");
+      if (dates.length) resolved.expires = dates.sort()[0] as string;
+      else if (never.length) {
+        const note = entry.expiresNote ?? one("expiresNote", never);
+        if (note) Object.assign(resolved, { expires: "none", expiresNote: note });
+      }
+    }
+    return resolved;
+  });
+}
+
+export const expiryRule: Rule = (entries, { today, warnDays, observed, repo }): Finding[] =>
   entries.flatMap((entry): Finding[] => {
-    const { value: expires, reported } = observedOr(entry.expires, entry, observed, "expires");
+    const { value: expires, reported } = observedOr(entry.expires, entry, observed, "expires", repo);
     if (expires === "none")
       return reported
         ? [
@@ -171,9 +219,35 @@ export const expiryRule: Rule = (entries, { today, warnDays, observed }): Findin
     ];
   });
 
-export const limitRule: Rule = (entries, { observed }) =>
+/**
+ * A store that deletes a secret on a date takes the stored copy of the key with it. That is independent of the
+ * credential's own expiry, which the file or the store's expiry fact records.
+ */
+export const deletionRule: Rule = (entries, { today, warnDays, observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
-    const { value, reported } = observedOr(entry.limit, entry, observed, "limit");
+    const date = observationsOf(entry, observed, repo)
+      .flatMap((observation) => observation.deletion ?? [])
+      .sort()[0];
+    if (!date) return [];
+    const days = daysUntil(date, today);
+    if (days > warnDays) return [];
+    return [
+      {
+        id: `deletion:${entry.id}`,
+        kind: "deletion",
+        severity: "action",
+        key: entry.id,
+        title: `${entry.id} is stored in a secret the store ${days < 0 ? "deleted" : "deletes"} ${date}`,
+        days,
+        detail:
+          "The store removes the secret on that date. Clear or move its expiry, or copy the value elsewhere first.",
+      },
+    ];
+  });
+
+export const limitRule: Rule = (entries, { observed, repo }) =>
+  entries.flatMap((entry): Finding[] => {
+    const { value, reported } = observedOr(entry.limit, entry, observed, "limit", repo);
     if (value === "unknown")
       return [
         {
@@ -366,9 +440,9 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
 };
 
 /** A key its provider has not seen used in `idleDays` is one nothing needs, so a candidate to revoke. The newest use decides. */
-export const idleRule: Rule = (entries, { today, idleDays = 90, observed }) =>
+export const idleRule: Rule = (entries, { today, idleDays = 90, observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
-    const used = observationsOf(entry, observed)
+    const used = observationsOf(entry, observed, repo)
       .flatMap((observation) => observation.lastUsed ?? [])
       .sort()
       .at(-1);
@@ -389,6 +463,7 @@ export const idleRule: Rule = (entries, { today, idleDays = 90, observed }) =>
 
 export const defaultRules: Rule[] = [
   expiryRule,
+  deletionRule,
   limitRule,
   unknownFactsRule,
   unregisteredRule,

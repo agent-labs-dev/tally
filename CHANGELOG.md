@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Google Cloud annotations carry credential facts.** `tally-owner`, `tally-service`, `tally-expires`,
+  `tally-expires-note`, `tally-limit` and `tally-runbook` fill an entry's unknown owner, service, expiry, limit and
+  runbook. Values in `.tally.yaml` win, conflicting annotations fail the run, and nothing is written to the file.
+- **A Google Cloud secret's `expireTime` is no longer a credential expiry.** It is the date Secret Manager deletes the
+  secret, and now raises a `deletion` finding within `warnDays`, whatever the entry's `expires` says.
 - **Draft facts are visible.** Keys drafted by `tally init` with `service: unknown` or `owner: unknown` now show
   `unknown-service` and `unknown-owner` gap findings.
 - **Help output is predictable.** Commands still print JSON when stdout is not a terminal, while help and version print

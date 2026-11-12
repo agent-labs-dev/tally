@@ -1,3 +1,5 @@
+import { parseEntry, withheld } from "./schema";
+
 /**
  * Read-only metadata from the places keys live: secret stores, through each vendor's own CLI and the login it already
  * has, and provider key listings, through the provider's admin API. A reader asks for names and dates only:
@@ -29,6 +31,13 @@ export interface Observation {
   lastUsed?: string;
   /** The spend limit a provider reports, such as `$50 per monthly`, or `none`. */
   limit?: string;
+  /** When the store deletes the secret itself. That is not the credential's expiry. */
+  deletion?: string;
+  /** Facts the store records about the key, which fill in a tally entry that says `unknown`. */
+  owner?: string;
+  service?: string;
+  expiresNote?: string;
+  runbook?: string;
 }
 
 /** Runs one command and returns its stdout, or throws. Injected so tests never reach a real store. */
@@ -132,7 +141,46 @@ function json(text: string): unknown {
   return JSON.parse(text || "[]");
 }
 
-/** Google Cloud Secret Manager: `gcp: PROJECT`. The newest enabled version's date is when the value last changed. */
+/** The Secret Manager annotations tally reads. Names carry no slash, which annotation keys do not allow. */
+const gcpAnnotations = {
+  "tally-owner": "owner",
+  "tally-service": "service",
+  "tally-expires": "expires",
+  "tally-expires-note": "expiresNote",
+  "tally-limit": "limit",
+  "tally-runbook": "runbook",
+} as const;
+
+/**
+ * The credential facts a secret's annotations carry. Only the supported keys are read, and they go through the same
+ * validator as a tally file entry, so a malformed or credential-shaped value fails the run without being echoed.
+ */
+function gcpFacts(name: string, annotations: Record<string, unknown> | undefined) {
+  const raw: Record<string, unknown> = { id: "annotations", locations: [{ gcp: "annotations" }] };
+  for (const [key, field] of Object.entries(gcpAnnotations))
+    if (annotations && key in annotations) raw[field] = annotations[key];
+  raw.service ??= "unknown";
+  raw.owner ??= "unknown";
+  raw.expires ??= "unknown";
+  raw.limit ??= "unknown";
+  const { entry, errors } = parseEntry(raw);
+  if (!entry) throw new Error(`gcp secret ${withheld(name)} has invalid tally annotations: ${errors.join("; ")}`);
+  const known = (value: string | undefined) => (value === "unknown" ? undefined : value);
+  return {
+    owner: known(entry.owner),
+    service: known(entry.service),
+    expires: known(entry.expires),
+    expiresNote: entry.expiresNote,
+    limit: known(entry.limit),
+    runbook: entry.runbook,
+  };
+}
+
+/**
+ * Google Cloud Secret Manager: `gcp: PROJECT`. The newest enabled version's date is when the value last changed. A
+ * secret's `expireTime` deletes the secret, not the credential, so it is `deletion` and never `expires`. Credential
+ * facts come from `tally-*` annotations.
+ */
 const gcp: Store = {
   scope: "project id",
   async list(source, { run }) {
@@ -145,7 +193,7 @@ const gcp: Store = {
         "--format=json",
         ...(source.filter ? [`--filter=${source.filter}`] : []),
       ]),
-    ) as { name: string; createTime?: string; expireTime?: string }[];
+    ) as { name: string; createTime?: string; expireTime?: string; annotations?: Record<string, unknown> }[];
     const observations: Observation[] = [];
     // A few at a time: one call per secret is the only metadata-only way to see its newest version.
     for (let at = 0; at < listing.length; at += 8) {
@@ -170,7 +218,8 @@ const gcp: Store = {
           scope: source.scope,
           name,
           changed: day(versions[0]?.createTime) ?? day(secret.createTime),
-          expires: day(secret.expireTime),
+          deletion: day(secret.expireTime),
+          ...gcpFacts(name, secret.annotations),
         };
       });
       observations.push(...(await Promise.all(batch)));
