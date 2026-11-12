@@ -46,12 +46,16 @@ const report: Report = {
   ],
 };
 
-async function render(load: () => Promise<Report> = async () => report) {
+async function render(load: () => Promise<Report> = async () => report, expanded = true) {
   let setup!: Awaited<ReturnType<typeof testRender>>;
   await act(async () => {
     setup = await testRender(<App initial={report} load={load} onQuit={() => {}} />, { width: 100, height: 16 });
   });
   await setup.renderOnce();
+  if (expanded) {
+    await act(async () => setup.mockInput.pressKeys(["RETURN"]));
+    await setup.renderOnce();
+  }
   return setup;
 }
 
@@ -191,6 +195,7 @@ test("d focuses the details, which scroll to the last location, and esc returns 
 test("a long runbook wraps in the details instead of being cut off", async () => {
   const setup = await renderLong(40, 24);
   try {
+    await press(setup, ["RETURN"]);
     expect(setup.captureCharFrame().replace(/\s+/g, "")).toContain("end-of-details");
   } finally {
     await act(async () => setup.renderer.destroy());
@@ -262,6 +267,7 @@ test("reload resets the selected row and details together after the list shrinks
   });
   await setup.renderOnce();
   try {
+    await press(setup, ["RETURN"]);
     await press(setup, ["j", "j", "j", "j", "j"]);
     await press(setup, ["r"]);
     next = full;
@@ -275,7 +281,7 @@ test("reload resets the selected row and details together after the list shrinks
   }
 });
 
-test("rows show group, service, owner and expiry, and the header leads with the counts", async () => {
+test("compact rows show their group and filter by it", async () => {
   const entry = report.entries[0];
   if (!entry) throw new Error("fixture");
   const grouped: Report = { ...report, entries: [{ ...entry, group: "owner-name" }], findings: [] };
@@ -290,9 +296,23 @@ test("rows show group, service, owner and expiry, and the header leads with the 
   try {
     const frame = setup.captureCharFrame();
     expect(frame.split("\n")[0]).toContain("0 action · 0 gaps · 1 keys · 1 groups");
-    expect(frame).toContain("owner-name · payments · team-payments · 2026-11-10");
+    expect(frame).toContain("owner-name / payments-api");
     await press(setup, ["/", "o", "w", "n", "e", "r", "-", "n", "\r"]);
     expect(setup.captureCharFrame()).toContain("payments-api");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("details start collapsed and the select toggles them without changing selection", async () => {
+  const setup = await render(async () => report, false);
+  try {
+    expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
+    await press(setup, ["RETURN"]);
+    expect(setup.captureCharFrame()).toContain("PAYMENTS_API_KEY");
+    await press(setup, ["RETURN"]);
+    expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
+    expect(setup.captureCharFrame()).toContain("▶ ! payments-api");
   } finally {
     await act(async () => setup.renderer.destroy());
   }

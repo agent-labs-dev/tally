@@ -7,7 +7,7 @@ import {
   TextAttributes,
 } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Report } from "./cli";
 import type { Finding } from "./reconcile";
 import type { Entry } from "./schema";
@@ -36,7 +36,17 @@ const CHROME_ROWS = 4;
 type Mode = "list" | "details" | "filter";
 
 // The same units in every mode and tab, so the hints wrap to the same rows and nothing below the list moves.
-const hints = ["↑↓ move", "d details", "tab view", "/ filter", "s sort", "r reload", "esc back", "q quit"];
+const hints = [
+  "↑↓ move",
+  "enter expand",
+  "d details",
+  "tab view",
+  "/ filter",
+  "s sort",
+  "r reload",
+  "esc back",
+  "q quit",
+];
 
 /** How urgent a key is, from its findings. The order is the default sort. */
 type State = "expired" | "expiring" | "action" | "gap" | "ok";
@@ -185,6 +195,7 @@ export function App({ initial, load, onQuit }: AppProps) {
   const detailRef = useRef<ScrollBoxRenderable>(null);
   const [cursor, setCursor] = useState(0);
   const [status, setStatus] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const needle = filter.toLowerCase();
   const keys = sortRows(keyRows(report), sort).filter(({ entry }) =>
@@ -224,6 +235,10 @@ export function App({ initial, load, onQuit }: AppProps) {
     selectRef.current?.focus();
   };
 
+  useEffect(() => {
+    if (mode === "details" && detailsOpen) detailRef.current?.focus();
+  }, [mode, detailsOpen]);
+
   // Application actions only: the select owns navigation, the input owns editing and the scrollbox owns scrolling.
   // A key can arrive in the same batch as the one before it, before React has rendered, so the widgets' own focus
   // is the truth. Moving focus here and calling preventDefault keeps the key from also reaching the old widget.
@@ -240,8 +255,10 @@ export function App({ initial, load, onQuit }: AppProps) {
     if (key.ctrl || key.meta) return;
     if (key.name === "escape") {
       key.preventDefault();
-      if (detailRef.current?.focused) toList();
-      else refilter("");
+      if (detailRef.current?.focused) {
+        setDetailsOpen(false);
+        toList();
+      } else refilter("");
     } else if (key.name === "q") onQuit();
     else if (key.name === "tab") {
       key.preventDefault();
@@ -250,8 +267,14 @@ export function App({ initial, load, onQuit }: AppProps) {
       toList();
     } else if (key.name === "d" && count > 0) {
       key.preventDefault();
-      setMode("details");
-      detailRef.current?.focus();
+      if (detailRef.current?.focused) {
+        setDetailsOpen(false);
+        toList();
+      } else {
+        setDetailsOpen(true);
+        setMode("details");
+        detailRef.current?.focus();
+      }
     } else if (key.name === "s" && view === "keys") {
       setSort(sorts[(sorts.indexOf(sort) + 1) % sorts.length] ?? "urgency");
       setCursor(0);
@@ -270,7 +293,7 @@ export function App({ initial, load, onQuit }: AppProps) {
   const options: SelectOption[] =
     view === "keys"
       ? keys.map((row) => ({
-          name: `${states[row.state].mark} ${row.entry.label ?? row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
+          name: `${states[row.state].mark} ${row.entry.group ? `${row.entry.group} / ` : ""}${row.entry.label ?? row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
           description: [row.entry.group, row.entry.service, row.entry.owner, row.entry.expires]
             .filter(Boolean)
             .join(" · "),
@@ -322,7 +345,8 @@ export function App({ initial, load, onQuit }: AppProps) {
             flexGrow={1}
             options={options}
             selectedIndex={at}
-            showDescription
+            showDescription={false}
+            onSelect={() => setDetailsOpen((open) => !open)}
             descriptionColor={color.dim}
             selectedDescriptionColor={color.selectionText}
             backgroundColor={color.none}
@@ -339,7 +363,8 @@ export function App({ initial, load, onQuit }: AppProps) {
         ref={detailRef}
         key={`${view}:${selectedKey?.entry.id ?? selectedFinding?.id}`}
         focused={mode === "details"}
-        height={detailRows}
+        height={detailsOpen ? detailRows : 0}
+        visible={detailsOpen}
         flexShrink={0}
         backgroundColor={color.none}
         border={["top"]}
