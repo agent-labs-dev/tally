@@ -191,6 +191,7 @@ export function App({ initial, load, onQuit }: AppProps) {
     matches(
       needle,
       entry.id,
+      entry.label,
       entry.service,
       entry.owner,
       entry.group,
