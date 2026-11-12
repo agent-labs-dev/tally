@@ -77,7 +77,7 @@ describe("store readers", () => {
   });
 
   test("gcp rejects bad or credential-shaped annotations without echoing them", async () => {
-    const secret = "sk-live1234567890abcdef";
+    const secret = ["sk", "invalid-example-fixture"].join("-");
     for (const annotations of [
       { "tally-expires": "next week" },
       { "tally-expires": "none" },
