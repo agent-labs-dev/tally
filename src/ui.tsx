@@ -10,11 +10,9 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { type ReactNode, useRef, useState } from "react";
 import type { Report } from "./cli";
 import type { Finding } from "./reconcile";
-import { type Entry, withheld } from "./schema";
+import type { Entry } from "./schema";
 
-// Terminal palette entries, so the colours follow the terminal's theme (light or dark) rather than a fixed hex
-// palette like Kiln's, which assumes a dark background. Unset text is the terminal's own foreground. The restrained
-// scheme is Kiln's: accent for chrome and the selection, orange and red only for what needs action, the rest dim.
+// Indexed colours follow the terminal theme. Selection uses its accent against the default background.
 const color = {
   text: RGBA.defaultForeground(),
   accent: RGBA.fromIndex(6),
@@ -25,16 +23,15 @@ const color = {
   green: RGBA.fromIndex(2),
   orange: RGBA.fromIndex(9),
   none: RGBA.fromValues(0, 0, 0, 0),
-  // Bright black: a subtle band behind the selected row in most themes.
-  band: RGBA.fromIndex(8),
+  selectionText: RGBA.defaultBackground(),
 };
 
 // The details pane (a titled top rule plus content) is the same height in both tabs, so switching tabs never moves
 // a line. It shrinks on a short terminal, never below one row, and keeps the list at least MIN_LIST rows.
 const DETAIL_ROWS = 8;
 const MIN_LIST = 3;
-// Header, status line and at least one hints row.
-const CHROME_ROWS = 3;
+// Two header rows, a status line and at least one hints row.
+const CHROME_ROWS = 4;
 
 type Mode = "list" | "details" | "filter";
 
@@ -272,7 +269,7 @@ export function App({ initial, load, onQuit }: AppProps) {
   const options: SelectOption[] =
     view === "keys"
       ? keys.map((row) => ({
-          name: `${states[row.state].mark} ${row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
+          name: `${states[row.state].mark} ${row.entry.label ?? row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
           description: [row.entry.group, row.entry.service, row.entry.owner, row.entry.expires]
             .filter(Boolean)
             .join(" · "),
@@ -295,9 +292,10 @@ export function App({ initial, load, onQuit }: AppProps) {
           <b>tally</b>
         </span>
         <span fg={action ? color.orange : color.green}>{`  ${action} action`}</span>
-        <span
-          attributes={DIM}
-        >{` · ${gaps} gaps · ${report.entries.length} keys${groups ? ` · ${groups} groups` : ""}  `}</span>
+        <span fg={gaps ? color.yellow : color.dim}>{` · ${gaps} gaps`}</span>
+        <span attributes={DIM}>{` · ${report.entries.length} keys${groups ? ` · ${groups} groups` : ""}`}</span>
+      </Line>
+      <Line>
         <span fg={view === "keys" ? color.accent : undefined} attributes={view === "keys" ? TextAttributes.BOLD : DIM}>
           keys
         </span>
@@ -308,7 +306,7 @@ export function App({ initial, load, onQuit }: AppProps) {
         >
           findings
         </span>
-        <span attributes={DIM}>{` · by ${sort} · ${withheld(report.repo ?? report.path)}`}</span>
+        <span attributes={DIM}>{` · sort: ${sort}`}</span>
       </Line>
       <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         {count === 0 ? (
@@ -325,13 +323,13 @@ export function App({ initial, load, onQuit }: AppProps) {
             selectedIndex={at}
             showDescription
             descriptionColor={color.dim}
-            selectedDescriptionColor={color.text}
+            selectedDescriptionColor={color.selectionText}
             backgroundColor={color.none}
             focusedBackgroundColor={color.none}
-            selectedBackgroundColor={color.band}
+            selectedBackgroundColor={color.accent}
             textColor={color.text}
             focusedTextColor={color.text}
-            selectedTextColor={color.accent}
+            selectedTextColor={color.selectionText}
             onChange={(index) => setCursor(index)}
           />
         )}
@@ -345,7 +343,7 @@ export function App({ initial, load, onQuit }: AppProps) {
         backgroundColor={color.none}
         border={["top"]}
         borderColor={mode === "details" ? color.accent : color.dim}
-        title={` ${selectedKey?.entry.id ?? selectedFinding?.key ?? ""} `}
+        title={` ${selectedKey?.entry.label ?? selectedKey?.entry.id ?? selectedFinding?.key ?? ""} `}
       >
         {selectedKey ? <KeyDetail row={selectedKey} /> : null}
         {selectedFinding ? (
@@ -379,7 +377,8 @@ export function App({ initial, load, onQuit }: AppProps) {
       <box flexDirection="row" flexWrap="wrap" columnGap={3} flexShrink={0}>
         {hints.map((hint) => (
           <text key={hint} wrapMode="none" flexShrink={0} attributes={DIM} fg={color.text}>
-            {hint}
+            <span fg={color.accent}>{hint.split(" ")[0]}</span>
+            <span>{` ${hint.split(" ").slice(1).join(" ")}`}</span>
           </text>
         ))}
       </box>
