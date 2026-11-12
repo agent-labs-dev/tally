@@ -208,6 +208,7 @@ export function App({ initial, load, onQuit }: AppProps) {
     load().then(
       (next) => {
         setReport(next);
+        setCursor(0);
         setStatus("");
       },
       (error: unknown) => setStatus(error instanceof Error ? error.message : String(error)),
@@ -306,6 +307,7 @@ export function App({ initial, load, onQuit }: AppProps) {
             focused={mode === "list"}
             flexGrow={1}
             options={options}
+            selectedIndex={at}
             showDescription={false}
             backgroundColor={color.none}
             focusedBackgroundColor={color.none}

@@ -243,3 +243,34 @@ test("keys typed in the same batch as the slash are filter text, not app actions
     await act(async () => setup.renderer.destroy());
   }
 });
+
+test("reload resets the selected row and details together after the list shrinks then grows", async () => {
+  const template = report.entries[1];
+  if (!template) throw new Error("fixture");
+  const full: Report = {
+    ...report,
+    entries: Array.from({ length: 6 }, (_, i) => ({ ...template, id: `key-${i}`, runbook: `book-${i}` })),
+    findings: [],
+  };
+  let next = { ...full, entries: full.entries.slice(0, 3) };
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={full} load={async () => next} onQuit={() => {}} />, {
+      width: 100,
+      height: 24,
+    });
+  });
+  await setup.renderOnce();
+  try {
+    await press(setup, ["j", "j", "j", "j", "j"]);
+    await press(setup, ["r"]);
+    next = full;
+    await press(setup, ["r"]);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("▶ ✓ key-0");
+    expect(frame).toContain("book-0");
+    expect(frame).not.toContain("book-5");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
