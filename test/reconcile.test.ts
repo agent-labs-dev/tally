@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { draft } from "../src/draft";
 import type { Context } from "../src/reconcile";
 import {
   daysUntil,
@@ -516,5 +517,67 @@ describe("gcp metadata", () => {
         limitRule,
       ]),
     ).toThrow("conflicting observed limit");
+  });
+});
+
+describe("pass locations", () => {
+  const sources = [{ kind: "pass", scope: "local" }];
+  const seen = (name: string) => ({ kind: "pass", scope: "local", name, changed: "2025-01-01" });
+  const held = (ref: string) => entry({ locations: [{ kind: "pass", ref }], expires: "none", limit: "none" });
+  const unregistered = (entries: Entry[], names: string[]) =>
+    reconcile(entries, { ...context, sources, observed: names.map(seen) }, [storeRule])
+      .map((finding) => finding.id)
+      .sort();
+
+  test("a location matches the scope and name or the bare name exactly, case-sensitively", () => {
+    expect(unregistered([held("local/wow/Key")], ["wow/Key"])).toEqual([]);
+    expect(unregistered([held("wow/Key")], ["wow/Key"])).toEqual([]);
+    expect(unregistered([held("local/wow/key")], ["wow/Key"])).toEqual([
+      "missing:payments-api:pass:local/wow/key",
+      "unregistered:pass:local:wow/Key",
+    ]);
+    // A path suffix is another entry, not this one.
+    expect(unregistered([held("local/wow/key")], ["key"])).toContain("unregistered:pass:local:key");
+    expect(unregistered([held("LOCAL/wow/Key")], ["wow/Key"])).toEqual(["unregistered:pass:local:wow/Key"]);
+    expect(unregistered([held("wow/local/Key")], [])).toEqual([]);
+  });
+
+  test("distinct case-only names keep distinct finding ids", () => {
+    expect(unregistered([], ["a/Key", "a/key"])).toEqual([
+      "unregistered:pass:local:a/Key",
+      "unregistered:pass:local:a/key",
+    ]);
+    expect(
+      reconcile([], { ...context, sources, observed: [seen("a/Key"), seen("a/key")], ignore: ["a/key"] }, [
+        storeRule,
+      ]).map((finding) => finding.id),
+    ).toEqual(["unregistered:pass:local:a/Key"]);
+  });
+
+  test("a pass location does not declare an env template variable", () => {
+    const findings = reconcile(
+      [held("local/wow/API_KEY")],
+      { ...context, templated: new Map([["API_KEY", ["env.example"]]]) },
+      [unregisteredRule],
+    );
+    expect(findings.map((finding) => finding.key)).toEqual(["API_KEY"]);
+  });
+
+  test("init neither drafts nor links a pass entry by name, unless a location declares it", () => {
+    const github = entry({ locations: [{ kind: "github", ref: "API_KEY" }] });
+    const observed = [seen("wow/API_KEY")];
+    const result = draft([github], { ...context, sources, observed }, "me");
+    expect(result.entries).toEqual([github]);
+    expect(result.drafted).toEqual([]);
+    expect(result.linked).toEqual([]);
+    // A pass location is storage only: it does not make a GCP secret or env variable of the same name already known.
+    const stored = held("local/wow/API_KEY");
+    const other = draft(
+      [stored],
+      { ...context, templated: new Map([["API_KEY", ["env.example"]]]), observed: [], ignore: [] },
+      "me",
+    );
+    expect(other.drafted.map((item) => item.secret)).toEqual(["API_KEY"]);
+    expect(draft([stored], { ...context, sources, observed }, "me").entries).toEqual([stored]);
   });
 });

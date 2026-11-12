@@ -1,3 +1,6 @@
+import { lstat, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { parseEntry, withheld } from "./schema";
 
 /**
@@ -52,6 +55,8 @@ export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 export interface Reader {
   run: Run;
   get: Get;
+  /** The injected environment, so a reader that locates files never reads `process.env` itself. */
+  env: Record<string, string | undefined>;
 }
 
 /** Where a provider's key listing lives and how its admin token is sent. */
@@ -70,6 +75,11 @@ export interface Store {
   /** What a scope may look like, when not a plain name. Never a flag or a path that escapes the listing. */
   scopePattern?: RegExp;
   api?: Api;
+  /**
+   * Names are case-sensitive free text and a location matches only by its exact `SCOPE/NAME` (or bare `NAME`). `init`
+   * never drafts or links one, because a copy in this store is storage and not evidence of the same value elsewhere.
+   */
+  exact?: boolean;
   list(source: Source, read: Reader): Promise<Observation[]>;
 }
 
@@ -523,11 +533,75 @@ const cloudflare: Store = {
   },
 };
 
-export const stores: Record<string, Store> = { gcp, aws, azure, github, anthropic, openai, openrouter, cloudflare };
+/**
+ * Unix pass: `pass: LABEL` with an optional `filter` that is a literal prefix of the entry names. The label is only a
+ * name for this store in locations. The store is `PASSWORD_STORE_DIR`, else `~/.password-store`. Only directory
+ * listings and the mtime of each `.gpg` file are read: never a file's bytes, and never `pass` or `gpg`. The mtime is
+ * when the ciphertext last changed, which a re-encryption or a touch moves without any rotation.
+ */
+const pass: Store = {
+  scope: "label for this password store",
+  exact: true,
+  async list(source, { env }) {
+    const root = env.PASSWORD_STORE_DIR || join(env.HOME || homedir(), ".password-store");
+    // The root is the one path that may be a symlink, because a person chose it. Nothing below it is followed.
+    try {
+      if (!(await stat(root)).isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new Error(`pass store ${source.scope} is missing or unreadable; set PASSWORD_STORE_DIR`);
+    }
+    const prefix = source.filter ?? "";
+    const observations: Observation[] = [];
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      let items: import("node:fs").Dirent[];
+      try {
+        items = await readdir(dir, { withFileTypes: true });
+      } catch {
+        throw new Error(`pass store ${source.scope} has an unreadable directory ${rel || "."}`);
+      }
+      for (const item of items.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const path = rel ? `${rel}/${item.name}` : item.name;
+        if (!rel && (item.name === ".git" || item.name === ".extensions")) continue;
+        // A path is relevant when a name under it can start with the filter, or it is itself such a name.
+        const relevant = `${path}/`.startsWith(prefix) || prefix.startsWith(`${path}/`) || path.startsWith(prefix);
+        if (item.isSymbolicLink()) {
+          // Following one could list or date files outside the store.
+          if (relevant) throw new Error(`pass store ${source.scope} has a symlink at ${path}; not followed`);
+        } else if (item.isDirectory()) {
+          if (relevant) await walk(join(dir, item.name), path);
+        } else if (item.isFile() && item.name.endsWith(".gpg") && item.name.length > 4) {
+          const name = path.slice(0, -4);
+          if (name.startsWith(prefix))
+            observations.push({
+              kind: "pass",
+              scope: source.scope,
+              name,
+              changed: day((await lstat(join(dir, item.name))).mtime.toISOString()),
+            });
+        }
+      }
+    };
+    await walk(root, "");
+    return observations;
+  },
+};
+
+export const stores: Record<string, Store> = {
+  gcp,
+  aws,
+  azure,
+  github,
+  pass,
+  anthropic,
+  openai,
+  openrouter,
+  cloudflare,
+};
 
 /** The same secret in any letter case, so one secret listed twice is one observation and one finding id. */
 export function observationKey({ kind, scope, name }: Observation): string {
-  return `${kind}:${scope}:${name}`.toLowerCase();
+  const key = `${kind}:${scope}:${name}`;
+  return stores[kind]?.exact ? key : key.toLowerCase();
 }
 
 /** Responses past this size are refused, so a broken or hostile endpoint cannot exhaust memory. */
@@ -594,7 +668,8 @@ export async function observe(
     const store = stores[source.kind];
     if (!store) throw new Error(`no reader for source kind ${source.kind}`);
     const get = store.api ? apiGet(source.kind, store.api, source, env, fetcher) : offlineGet;
-    for (const observation of await store.list(source, { run, get })) all.set(observationKey(observation), observation);
+    for (const observation of await store.list(source, { run, get, env }))
+      all.set(observationKey(observation), observation);
   }
   return [...all.values()];
 }

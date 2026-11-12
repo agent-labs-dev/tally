@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type Api,
   apiGet,
   type Fetch,
   isMetadataCommand,
+  observationKey,
   observe,
   ownerTypes,
   type Run,
@@ -132,8 +136,7 @@ describe("store readers", () => {
       if (argv[0] === "aws") return JSON.stringify({ SecretList: [{ Name: "KEY" }] });
       return JSON.stringify([{ name: "KEY", id: "https://vault.example/secrets/KEY" }]);
     };
-    for (const [kind, store] of Object.entries(stores))
-      if (!store.api) await observe([{ kind, scope: "scope", filter: "f" }], run);
+    for (const kind of ["gcp", "aws", "azure", "github"]) await observe([{ kind, scope: "scope", filter: "f" }], run);
   });
 
   test("runCommand refuses anything but a listing before running it", async () => {
@@ -447,5 +450,102 @@ describe("github reader", () => {
       ["gh", "api", "--jq", ".type", "users/org-owner"],
       ["gh", "api", "--jq", ".type", "users/missing"],
     ]);
+  });
+});
+
+describe("pass reader", () => {
+  const temporary: string[] = [];
+  const temp = (prefix: string) => {
+    const path = mkdtempSync(join(tmpdir(), prefix));
+    temporary.push(path);
+    return path;
+  };
+  afterEach(() => {
+    for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true });
+  });
+  const noRun: Run = async (argv) => {
+    throw new Error(`pass must not run ${argv.join(" ")}`);
+  };
+  /** No encryption is needed to exercise directory and timestamp discovery. */
+  function store(files: Record<string, string> = {}) {
+    const root = temp("tally-pass-");
+    for (const [path, date] of Object.entries(files)) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), "");
+      utimesSync(join(root, path), new Date(`${date}T12:00:00Z`), new Date(`${date}T12:00:00Z`));
+    }
+    return { root, env: { PASSWORD_STORE_DIR: root } };
+  }
+  const read = (env: Record<string, string>, filter?: string) =>
+    observe([{ kind: "pass", scope: "local", ...(filter ? { filter } : {}) }], noRun, fetch, env);
+
+  test("lists nested entries by name with the ciphertext mtime, skipping .git and .extensions", async () => {
+    const { env } = store({
+      "wow/a.gpg": "2026-01-02",
+      "wow/deep/b.gpg": "2026-02-03",
+      "other/c.gpg": "2026-03-04",
+      "wow/notes.txt": "2026-01-01",
+      ".gpg-id": "2026-01-01",
+      ".git/x.gpg": "2026-01-01",
+      ".extensions/y.gpg": "2026-01-01",
+    });
+    expect((await read(env)).map(({ name, changed }) => [name, changed])).toEqual([
+      ["other/c", "2026-03-04"],
+      ["wow/a", "2026-01-02"],
+      ["wow/deep/b", "2026-02-03"],
+    ]);
+  });
+
+  test("the filter is a case-sensitive literal prefix of the entry name", async () => {
+    const { env } = store({ "wow/a.gpg": "2026-01-02", "WOW/a.gpg": "2026-01-02", "wow/deep/b.gpg": "2026-01-02" });
+    expect((await read(env, "wow/")).map(({ name }) => name)).toEqual(["wow/a", "wow/deep/b"]);
+    expect((await read(env, "wow/d")).map(({ name }) => name)).toEqual(["wow/deep/b"]);
+    expect((await read(env, "wow/a")).map(({ name }) => name)).toEqual(["wow/a"]);
+    expect((await read(env, "WOW")).map(({ name }) => name)).toEqual(["WOW/a"]);
+  });
+
+  test("names differing only by case are distinct observations", async () => {
+    const { env } = store({ "wow/Key.gpg": "2026-01-02", "wow/key.gpg": "2026-01-02" });
+    const observed = await read(env);
+    expect(observed).toHaveLength(2);
+    expect(new Set(observed.map(observationKey)).size).toBe(2);
+  });
+
+  test("an empty store is empty and a missing or non-directory one fails the run", async () => {
+    expect(await read(store().env)).toEqual([]);
+    const { root } = store({ "f.gpg": "2026-01-01" });
+    await expect(read({ PASSWORD_STORE_DIR: join(root, "nope") })).rejects.toThrow("missing or unreadable");
+    await expect(read({ PASSWORD_STORE_DIR: join(root, "f.gpg") })).rejects.toThrow("missing or unreadable");
+  });
+
+  test("the default store is under HOME", async () => {
+    const home = temp("tally-home-");
+    mkdirSync(join(home, ".password-store"));
+    writeFileSync(join(home, ".password-store", "k.gpg"), "");
+    expect((await read({ HOME: home })).map(({ name }) => name)).toEqual(["k"]);
+  });
+
+  test("a symlink under the root fails the run, but the root may be one", async () => {
+    const { root } = store({ "wow/a.gpg": "2026-01-01" });
+    const outside = store({ "secret.gpg": "2026-01-01" }).root;
+    symlinkSync(join(outside, "secret.gpg"), join(root, "wow", "linked.gpg"));
+    await expect(read({ PASSWORD_STORE_DIR: root })).rejects.toThrow("symlink at wow/linked.gpg");
+    // A symlinked directory is not entered, and one outside the filter does not matter.
+    const dirs = store({ "wow/a.gpg": "2026-01-01" });
+    symlinkSync(outside, join(dirs.root, "linked"));
+    await expect(read(dirs.env)).rejects.toThrow("symlink at linked");
+    expect((await read(dirs.env, "wow/")).map(({ name }) => name)).toEqual(["wow/a"]);
+    const alias = join(temp("tally-alias-"), "store");
+    symlinkSync(dirs.root, alias);
+    expect((await read({ PASSWORD_STORE_DIR: alias }, "wow/")).map(({ name }) => name)).toEqual(["wow/a"]);
+  });
+
+  test("never reads file contents or runs a command", async () => {
+    const { root, env } = store({ "wow/a.gpg": "2026-01-01" });
+    // Mode 000 lets only a listing and a stat succeed: opening the file would throw.
+    chmodSync(join(root, "wow/a.gpg"), 0);
+    expect((await read(env)).map(({ name }) => name)).toEqual(["wow/a"]);
+    expect(isMetadataCommand(["pass", "show", "wow/a"])).toBe(false);
+    expect(isMetadataCommand(["gpg", "--decrypt", "wow/a.gpg"])).toBe(false);
   });
 });

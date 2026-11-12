@@ -1,5 +1,5 @@
 import type { Entry, Location } from "./schema";
-import { type Observation, observationKey, type Source } from "./stores";
+import { type Observation, observationKey, type Source, stores } from "./stores";
 
 /**
  * `action` findings each get their own issue and make `check` exit 3.
@@ -98,6 +98,10 @@ export function isStored(location: Location, observation: Observation, repo?: st
     const full = local ? (repo ? `${repo}/${location.ref}` : undefined) : location.ref;
     return full?.toUpperCase() === `${observation.scope}/${observation.name}`.toUpperCase();
   }
+  // An exact store's names are case-sensitive, and only the whole `SCOPE/NAME` or the bare `NAME` declares one: a
+  // suffix match would let `local/wow/key` stand in for a different entry named `key`.
+  if (stores[location.kind]?.exact)
+    return location.ref === observation.name || location.ref === `${observation.scope}/${observation.name}`;
   const ref = storePath(location.ref).toUpperCase();
   const name = observation.name.toUpperCase();
   if (ref === name) return true;
@@ -327,7 +331,11 @@ function declaredInGithub(entries: readonly Entry[], repo: string | undefined): 
 export const unregisteredRule: Rule = (entries, { referenced, templated, ignore, repo }) => {
   const ignored = new Set(ignore.map((name) => name.toUpperCase()));
   const inGithub = declaredInGithub(entries, repo);
-  const anywhere = new Set(entries.flatMap((entry) => entry.locations.map((location) => storedName(location.ref))));
+  const anywhere = new Set(
+    entries.flatMap((entry) =>
+      entry.locations.filter((location) => !stores[location.kind]?.exact).map((location) => storedName(location.ref)),
+    ),
+  );
   const missing = new Map<string, string[]>();
   for (const [name, files] of referenced ?? []) if (!inGithub.has(name)) missing.set(name, [...files]);
   for (const [name, files] of templated ?? [])
@@ -398,7 +406,10 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
   const inGithub = declaredInGithub(entries, repo);
   const findings: Finding[] = [];
   for (const observation of observed) {
-    if (ignored.has(observation.name.toUpperCase())) continue;
+    if (
+      stores[observation.kind]?.exact ? ignore.includes(observation.name) : ignored.has(observation.name.toUpperCase())
+    )
+      continue;
     if (locations.some(({ location }) => isStored(location, observation, repo))) continue;
     // A workflow secret nobody declared anywhere is already reported by `unregisteredRule`, under its own id.
     const name = storedName(observation.name);
@@ -420,15 +431,19 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
     // Missing only when that is certain. A filtered source lists part of its store, so it proves nothing is gone. A
     // bare name needs every source of its kind read whole; a ref with a path needs a scope it names read whole, since
     // without one it may be another scope's secret or a name that holds a slash.
-    const segments = storePath(location.ref).toLowerCase().split("/");
-    const whole = ofKind.filter((source) => !source.filter).map((source) => source.scope.toLowerCase());
+    const exact = stores[location.kind]?.exact;
+    const ref = exact ? location.ref : storePath(location.ref).toLowerCase();
+    const segments = ref.split("/");
+    const whole = ofKind
+      .filter((source) => !source.filter)
+      .map((source) => (exact ? source.scope : source.scope.toLowerCase()));
     const certain =
       segments.length === 1
         ? whole.length === ofKind.length
-        : whole.some((scope) => segments.slice(0, -1).includes(scope));
+        : whole.some((scope) => (exact ? ref.startsWith(`${scope}/`) : segments.slice(0, -1).includes(scope)));
     if (!certain) continue;
     findings.push({
-      id: `missing:${entry.id}:${location.kind}:${location.ref.toLowerCase()}`,
+      id: `missing:${entry.id}:${location.kind}:${stores[location.kind]?.exact ? location.ref : location.ref.toLowerCase()}`,
       kind: "missing",
       severity: "action",
       key: entry.id,

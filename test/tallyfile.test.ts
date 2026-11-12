@@ -249,3 +249,12 @@ test("a source token is an upper-case variable name, and only for a provider", a
   expect(loaded.errors).toEqual([]);
   expect(loaded.config.sources).toEqual([{ kind: "openrouter", scope: "team", token: "ROUTER_ADMIN" }]);
 });
+
+test("a pass source takes a label and a filter, and no token", async () => {
+  const dir = temp();
+  const path = join(dir, ".tally.yaml");
+  writeFileSync(path, "sources:\n  - pass: local\n    filter: wow/\nkeys: []\n");
+  expect((await loadTallyFile(path)).config.sources).toEqual([{ kind: "pass", scope: "local", filter: "wow/" }]);
+  writeFileSync(path, "sources:\n  - pass: local\n    token: X\nkeys: []\n");
+  expect((await loadTallyFile(path)).errors).toHaveLength(1);
+});

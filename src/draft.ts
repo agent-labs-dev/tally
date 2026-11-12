@@ -32,6 +32,11 @@ function lastSegment(ref: string): string {
   return (ref.split("/").pop() ?? ref).toUpperCase();
 }
 
+/** Whether a location names the secret elsewhere. A location in an exact store, such as pass, is storage only. */
+function names(at: Location, secret: string): boolean {
+  return !stores[at.kind]?.exact && lastSegment(at.ref) === secret;
+}
+
 /**
  * Everything the code and the stores hold that the entries do not record yet. A workflow secret becomes a `github`
  * location, a template variable an `env` one, and a stored secret a `KIND: SCOPE/NAME` one. A location goes onto the
@@ -44,7 +49,13 @@ export function draft(existing: readonly Entry[], context: Context, owner: strin
   const ignored = new Set(context.ignore.map((name) => name.toUpperCase()));
   const result: Draft = { entries, drafted: [], linked: [], unsure: [] };
 
-  const found: { secret: string; location: Location; has: (entry: Entry) => boolean; draftable: boolean }[] = [];
+  const found: {
+    exact?: boolean;
+    secret: string;
+    location: Location;
+    has: (entry: Entry) => boolean;
+    draftable: boolean;
+  }[] = [];
   for (const secret of [...(context.referenced?.keys() ?? [])].sort())
     found.push({
       secret,
@@ -56,11 +67,12 @@ export function draft(existing: readonly Entry[], context: Context, owner: strin
     found.push({
       secret,
       location: { kind: "env", ref: secret },
-      has: (entry) => entry.locations.some((at) => lastSegment(at.ref) === secret),
+      has: (entry) => entry.locations.some((at) => names(at, secret)),
       draftable: true,
     });
   for (const observation of context.observed ?? [])
     found.push({
+      exact: stores[observation.kind]?.exact === true,
       secret: observation.name.toUpperCase(),
       location: { kind: observation.kind, ref: `${observation.scope}/${observation.name}` },
       has: (entry) => entry.locations.some((at) => isStored(at, observation, context.repo)),
@@ -68,9 +80,10 @@ export function draft(existing: readonly Entry[], context: Context, owner: strin
       draftable: !stores[observation.kind]?.api && credentialName.test(observation.name.toUpperCase()),
     });
 
-  for (const { secret, location, has, draftable } of found) {
-    if (ignored.has(secret) || entries.some(has)) continue;
-    const named = entries.filter((entry) => entry.locations.some((at) => lastSegment(at.ref) === secret));
+  for (const { secret, location, has, draftable, exact } of found) {
+    // A copy in an exact store is declared by hand: its name says nothing about which key it holds.
+    if (ignored.has(secret) || exact || entries.some(has)) continue;
+    const named = entries.filter((entry) => entry.locations.some((at) => names(at, secret)));
     const [only] = named;
     if (named.length > 1) {
       if (!result.unsure.includes(secret)) result.unsure.push(secret);

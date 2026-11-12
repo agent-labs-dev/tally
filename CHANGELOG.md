@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **A local Unix pass store is a source.** `pass: LABEL` (optionally with a `filter` name prefix) lists the entries under
+  `PASSWORD_STORE_DIR` or `~/.password-store` with the modified time of each `.gpg` file, from directory listings only:
+  nothing is decrypted or read. Names are case-sensitive, symlinks and a missing store fail the run, and `init` never
+  drafts or links a pass entry. The date is when the ciphertext changed, not proof of rotation.
 - **Google Cloud annotations carry credential facts.** `tally-owner`, `tally-service`, `tally-expires`,
   `tally-expires-note`, `tally-limit` and `tally-runbook` fill an entry's unknown owner, service, expiry, limit and
   runbook. Values in `.tally.yaml` win, conflicting annotations fail the run, and nothing is written to the file.

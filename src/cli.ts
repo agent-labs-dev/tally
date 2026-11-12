@@ -50,8 +50,9 @@ Global flags: --config PATH, --json.
 Defaults: --config from TALLY_CONFIG, then the nearest .tally.yaml up to the repository root, then
 $XDG_CONFIG_HOME/tally/tally.yaml (~/.config/tally/tally.yaml) for keys that live on one machine.
 Expiry and limit default to unknown, which check reports as a gap.
-sources: in the tally file names secret stores (gcp, aws, azure, github), read through their own CLI and login, and provider
-key listings (anthropic, openai, openrouter, cloudflare), read with an admin token from the environment. Only names,
+sources: in the tally file names secret stores (gcp, aws, azure, github), read through their own CLI and login, a local
+Unix pass store (pass, read from the filesystem: names and file dates only), and provider key listings
+(anthropic, openai, openrouter, cloudflare), read with an admin token from the environment. Only names,
 dates and limits are read, never a value. --offline skips them all.
 Exit codes: 0 ok, 1 error, 2 usage, 3 action findings, so rotate the keys they name.`;
 
