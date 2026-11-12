@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { Context } from "../src/reconcile";
 import {
   daysUntil,
+  deletionRule,
   expiryRule,
   idleRule,
   limitRule,
   type Rule,
   reconcile,
+  resolveEntries,
   staleRule,
   storeRule,
   unregisteredRule,
@@ -436,5 +438,78 @@ describe("github secrets", () => {
       withRepo({ referenced, repo, observed, sources: [{ kind: "github", scope: repo }] }),
     );
     expect(findings.map((finding) => finding.id)).toEqual(["unregistered:DEPLOY_TOKEN"]);
+  });
+});
+
+describe("gcp metadata", () => {
+  const key = (over: Partial<Entry> = {}) =>
+    entry({
+      locations: [{ kind: "gcp", ref: "KEY" }],
+      owner: "unknown",
+      expires: "unknown",
+      limit: "unknown",
+      ...over,
+    });
+  const seen = (over = {}) => ({ kind: "gcp", scope: "proj", name: "KEY", ...over });
+
+  test("secret deletion warns on its own and is not the credential expiry", () => {
+    const observed = [seen({ deletion: "2026-01-10" })];
+    const found = reconcile([key({ expires: "2030-01-01" })], { ...context, observed }, [expiryRule, deletionRule]);
+    expect(found).toEqual([expect.objectContaining({ id: "deletion:payments-api", kind: "deletion", days: 9 })]);
+    expect(reconcile([key({ expires: "unknown" })], { ...context, observed }, [expiryRule])[0]).toMatchObject({
+      kind: "unknown-expiry",
+    });
+    expect(reconcile([key()], { ...context, observed: [seen({ deletion: "2026-06-01" })] }, [deletionRule])).toEqual(
+      [],
+    );
+  });
+
+  test("resolveEntries fills unknown facts, keeps known ones and writes nothing back", () => {
+    const original = key({ service: "unknown" });
+    const observed = [seen({ owner: "team-a", service: "svc", runbook: "r.md", limit: "$5", expires: "2026-03-03" })];
+    const [resolved] = resolveEntries([original], observed, "owner/name");
+    expect(resolved).toMatchObject({
+      owner: "team-a",
+      service: "svc",
+      runbook: "r.md",
+      limit: "$5",
+      expires: "2026-03-03",
+    });
+    expect(original).toMatchObject({ owner: "unknown", service: "unknown", expires: "unknown" });
+    const declaredUnlimited = resolveEntries([key()], [seen({ limit: "none" })])[0];
+    expect(declaredUnlimited?.limit).toBe("none");
+    expect(
+      resolveEntries(
+        [key({ locations: [{ kind: "openrouter", ref: "proj/KEY" }] })],
+        [{ ...seen({ limit: "none" }), kind: "openrouter" }],
+      )[0]?.limit,
+    ).toBe("unknown");
+    expect(resolveEntries([key({ owner: "kept", runbook: "mine.md" })], observed)[0]).toMatchObject({
+      owner: "kept",
+      runbook: "mine.md",
+    });
+    expect(resolveEntries([key()], [{ ...seen({ owner: "team-a" }), scope: "proj", name: "OTHER" }])[0]?.owner).toBe(
+      "unknown",
+    );
+  });
+
+  test("conflicting observed values fail without naming them, and expiry takes the earliest", () => {
+    const two = key({
+      service: "unknown",
+      locations: [
+        { kind: "gcp", ref: "proj-a/KEY" },
+        { kind: "gcp", ref: "proj-b/KEY" },
+      ],
+    });
+    const copy = (scope: string, over: object) => ({ ...seen(over), scope });
+    for (const field of ["owner", "service", "runbook", "limit"])
+      expect(() =>
+        resolveEntries([two], [copy("proj-a", { [field]: "one" }), copy("proj-b", { [field]: "two" })]),
+      ).toThrow(`conflicting observed ${field}`);
+    const [resolved] = resolveEntries(
+      [two],
+      [copy("proj-a", { expires: "2026-05-05" }), copy("proj-b", { expires: "2026-04-04" })],
+    );
+    expect(resolved?.expires).toBe("2026-04-04");
   });
 });

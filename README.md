@@ -130,6 +130,7 @@ rotated.
 | Finding | Severity | Meaning |
 |---|---|---|
 | `expired`, `expiring` | action | The date has passed, or is inside `warnDays` |
+| `deletion` | action | A store is scheduled to delete a declared secret within `warnDays` |
 | `unknown-expiry`, `unknown-limit`, `unknown-service`, `unknown-owner`, `org-owner` | gap | A fact is missing, or an organization owner cannot be assigned. The gaps share one digest issue |
 | `no-expiry`, `no-limit` | gap | The entry records nothing, and its provider says the key never expires or has no spend limit |
 | `unregistered` | action | A workflow or an env template names a secret no entry declares |
@@ -175,7 +176,7 @@ sources:
 
 | Kind | Scope | Reads | Changed date |
 |---|---|---|---|
-| `gcp` | project id | `gcloud secrets list`, `gcloud secrets versions list` | newest enabled version |
+| `gcp` | project id | `gcloud secrets list`, `gcloud secrets versions list` | newest enabled version; `tally-*` annotations |
 | `aws` | region | `aws secretsmanager list-secrets` | last rotation, else last change |
 | `azure` | vault name | `az keyvault secret list` | last update |
 | `github` | `OWNER/NAME` or an organization | `gh api` secret and environment listings | last update |
@@ -184,6 +185,38 @@ tally runs each vendor's CLI with the login it already has. It runs only the lis
 anything else, so it never prints, sets or backs up a value. Give it a role that cannot read
 values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets` on AWS, and the `list` secret
 permission on Azure.
+
+### Google Cloud annotations
+
+Secret Manager holds the credential value. Its annotations can hold the metadata, so the facts live next to the key
+and not in a file someone must remember to edit. tally reads these annotation keys and ignores every other one:
+
+| Annotation | Fills |
+|---|---|
+| `tally-owner` | `owner` |
+| `tally-service` | `service` |
+| `tally-expires` | `expires`: a date, or `none` with a `tally-expires-note` |
+| `tally-expires-note` | `expiresNote` |
+| `tally-limit` | `limit` |
+| `tally-runbook` | `runbook` |
+
+```sh
+gcloud secrets update PAYMENTS_API_KEY --project my-project \
+  --update-annotations=tally-owner=team-payments,tally-expires=2027-03-01
+```
+
+Annotations go through the same checks as the file, so a malformed or credential-shaped one fails the run without
+being echoed. They complete a `.tally.yaml` entry only where it says `unknown` (or has no `runbook`), so a value in the
+file is an intentional override. Two annotations that disagree on owner, service, runbook or limit fail the run: record
+the value in the file. For an unknown YAML expiry, the earliest observed credential expiry wins. A GCP `tally-limit: none` records an intentional lack of a limit, just as `limit: none` in YAML does. Nothing is written back to `.tally.yaml`.
+
+A secret still needs an entry with a `gcp` location, which `tally init` drafts: an annotation alone does not declare a
+key.
+
+A secret's own `expireTime` removes the secret from Secret Manager, not the credential from its provider, so tally never
+reads it as the key's expiry. It reports a `deletion` finding once that date is within `warnDays`, whatever the entry's
+`expires` says. Secret Manager's rotation schedule is likewise only a Pub/Sub notification; it does not rotate the key
+at its provider, so tally does not treat it as a rotation or an expiry.
 
 GitHub never returns a secret value through its API, only names and dates. tally runs `gh api` only as an exact
 listing command, so no extra argument can turn it into a write. Listing secrets needs admin access, which a workflow's

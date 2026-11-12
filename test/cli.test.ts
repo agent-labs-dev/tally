@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/cli";
@@ -282,6 +282,59 @@ describe("cli", () => {
     expect(result.json.configFields).toBe(
       "warnDays, staleDays, idleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
     );
+  });
+});
+
+describe("gcp annotations", () => {
+  const listing = (annotations: Record<string, string>, expireTime?: string): Run => {
+    return async (argv) => {
+      if (argv.slice(0, 3).join(" ") === "gcloud secrets list")
+        return JSON.stringify([
+          { name: "projects/1/secrets/KEY", createTime: "2025-12-01T00:00:00Z", expireTime, annotations },
+        ]);
+      if (argv.slice(0, 4).join(" ") === "gcloud secrets versions list") return "[]";
+      if (argv[0] === "gh") return "User\n";
+      throw new Error(`unexpected ${argv.join(" ")}`);
+    };
+  };
+  const file = (extra = "") =>
+    `sources:\n  - gcp: proj\nkeys:\n  - id: key\n    service: unknown\n    owner: unknown\n    locations:\n      - gcp: KEY\n    expires: unknown\n    limit: unknown\n${extra}`;
+
+  test("annotations complete the report, issue assignment and findings, and the file is untouched", async () => {
+    const { config, run } = harness();
+    writeFileSync(config, file());
+    const before = readFileSync(config, "utf8");
+    const annotations = {
+      "tally-owner": "team-a",
+      "tally-service": "svc",
+      "tally-expires": "2026-11-10",
+      "tally-limit": "$5",
+    };
+    const options = { run: listing(annotations, "2026-11-20T00:00:00Z") };
+    const checked = await run(["check", "--today", "2026-11-02"], options);
+    const kinds = (checked.json.findings as { kind: string }[]).map((finding) => finding.kind).sort();
+    expect(kinds).toEqual(["deletion", "expiring"]);
+
+    const writes: string[][] = [];
+    const gh: Gh = async (args) => {
+      writes.push(args);
+      return args[1] === "list" ? "[]" : args[1] === "create" ? "https://github.com/owner/name/issues/7" : "";
+    };
+    await run(["issues", "sync", "--repo", "owner/name", "--today", "2026-11-02"], { ...options, gh });
+    const created = writes.filter((args) => args[0] === "issue" && args[1] === "create");
+    expect(created.length).toBe(2);
+    expect(created.map((args) => args.join(" ")).join(" ")).toContain("| Owner | team-a |");
+    expect(created.map((args) => args.join(" ")).join(" ")).toContain("| Limit | $5 |");
+    expect(writes.filter((args) => args.includes("--add-assignee") && args.includes("team-a"))).toHaveLength(2);
+    expect(readFileSync(config, "utf8")).toBe(before);
+  });
+
+  test("conflicting annotations and bad annotations fail the run", async () => {
+    const { config, run } = harness();
+    writeFileSync(config, file());
+    const bad = await run(["check"], { run: listing({ "tally-expires": "soon" }) });
+    expect(bad.code).toBe(1);
+    expect(bad.text).toContain("invalid tally annotations");
   });
 });
 
