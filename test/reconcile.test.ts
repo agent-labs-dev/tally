@@ -538,8 +538,12 @@ describe("pass locations", () => {
     ]);
     // A path suffix is another entry, not this one.
     expect(unregistered([held("local/wow/key")], ["key"])).toContain("unregistered:pass:local:key");
-    expect(unregistered([held("LOCAL/wow/Key")], ["wow/Key"])).toEqual(["unregistered:pass:local:wow/Key"]);
-    expect(unregistered([held("wow/local/Key")], [])).toEqual([]);
+    expect(unregistered([held("LOCAL/wow/Key")], ["wow/Key"])).toEqual([
+      "missing:payments-api:pass:LOCAL/wow/Key",
+      "unregistered:pass:local:wow/Key",
+    ]);
+    expect(unregistered([held("wow/Key")], [])).toEqual(["missing:payments-api:pass:wow/Key"]);
+    expect(unregistered([held("wow/local/Key")], [])).toEqual(["missing:payments-api:pass:wow/local/Key"]);
   });
 
   test("distinct case-only names keep distinct finding ids", () => {

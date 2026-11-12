@@ -429,17 +429,17 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
     if (!ofKind.length) continue;
     if (observed.some((observation) => isStored(location, observation, repo))) continue;
     // Missing only when that is certain. A filtered source lists part of its store, so it proves nothing is gone. A
-    // bare name needs every source of its kind read whole; a ref with a path needs a scope it names read whole, since
-    // without one it may be another scope's secret or a name that holds a slash.
-    const exact = stores[location.kind]?.exact;
+    // bare name needs every source of its kind read whole. Exact stores also accept bare nested paths, so a full
+    // scan of every scope proves those absent too. Otherwise a path needs a scope it names read whole.
+    const exact = stores[location.kind]?.exact === true;
     const ref = exact ? location.ref : storePath(location.ref).toLowerCase();
     const segments = ref.split("/");
     const whole = ofKind
       .filter((source) => !source.filter)
       .map((source) => (exact ? source.scope : source.scope.toLowerCase()));
     const certain =
-      segments.length === 1
-        ? whole.length === ofKind.length
+      segments.length === 1 || exact
+        ? whole.length === ofKind.length || (exact && whole.some((scope) => ref.startsWith(`${scope}/`)))
         : whole.some((scope) => (exact ? ref.startsWith(`${scope}/`) : segments.slice(0, -1).includes(scope)));
     if (!certain) continue;
     findings.push({
