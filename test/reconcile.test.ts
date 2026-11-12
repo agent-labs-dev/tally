@@ -511,5 +511,10 @@ describe("gcp metadata", () => {
       [copy("proj-a", { expires: "2026-05-05" }), copy("proj-b", { expires: "2026-04-04" })],
     );
     expect(resolved?.expires).toBe("2026-04-04");
+    expect(() =>
+      reconcile([two], { ...context, observed: [copy("proj-a", { limit: "$20" }), copy("proj-b", { limit: "$50" })] }, [
+        limitRule,
+      ]),
+    ).toThrow("conflicting observed limit");
   });
 });

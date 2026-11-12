@@ -128,6 +128,8 @@ function observedOr(
 ): { value: string; reported: boolean } {
   if (recorded !== "unknown") return { value: recorded, reported: false };
   const values = observationsOf(entry, observed, repo).flatMap((observation) => observation[field] ?? []);
+  if (field === "limit" && new Set(values).size > 1)
+    throw new Error(`${entry.id} has conflicting observed limit values; record one in the tally file`);
   const [first] = values.filter((value) => value !== "none").sort();
   return { value: first ?? (values.length ? "none" : "unknown"), reported: true };
 }

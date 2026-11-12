@@ -208,7 +208,9 @@ gcloud secrets update PAYMENTS_API_KEY --project my-project \
 Annotations go through the same checks as the file, so a malformed or credential-shaped one fails the run without
 being echoed. They complete a `.tally.yaml` entry only where it says `unknown` (or has no `runbook`), so a value in the
 file is an intentional override. Two annotations that disagree on owner, service, runbook or limit fail the run: record
-the value in the file. For an unknown YAML expiry, the earliest observed credential expiry wins. A GCP `tally-limit: none` records an intentional lack of a limit, just as `limit: none` in YAML does. Nothing is written back to `.tally.yaml`.
+the value in the file. For an unknown YAML expiry, the earliest observed credential expiry wins. A GCP
+`tally-limit: none` records an intentional lack of a limit, just as `limit: none` in YAML does. Nothing is written back
+to `.tally.yaml`.
 
 A secret still needs an entry with a `gcp` location, which `tally init` drafts: an annotation alone does not declare a
 key.
