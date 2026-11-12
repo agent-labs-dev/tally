@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import packageJson from "../package.json";
 import { draft } from "./draft";
 import { desiredIssues, type Gh, runGh, syncIssues } from "./issues";
@@ -28,8 +29,10 @@ Commands print JSON when stdout is not a terminal or with --json. Help and versi
                                  and stores hold that no key names, and each stored copy of a key as a location
   tally check [--today YYYY-MM-DD] [--offline]
                                  report expiring, stale, undeclared and missing keys and missing facts, action findings exit 3
+  tally [--today YYYY-MM-DD] [--offline]
   tally ui [--today YYYY-MM-DD] [--offline]
                                  browse keys and findings in the terminal; r reloads, q quits
+                                 without a terminal, bare tally prints schema JSON
   tally notify [--today YYYY-MM-DD] [--offline]
                                  run check, then send a desktop notification per action finding
   tally list [--group G] [--service S]
@@ -50,8 +53,9 @@ Global flags: --config PATH, --json.
 Defaults: --config from TALLY_CONFIG, then the nearest .tally.yaml up to the repository root, then
 $XDG_CONFIG_HOME/tally/tally.yaml (~/.config/tally/tally.yaml) for keys that live on one machine.
 Expiry and limit default to unknown, which check reports as a gap.
-sources: in the tally file names secret stores (gcp, aws, azure, github), read through their own CLI and login, and provider
-key listings (anthropic, openai, openrouter, cloudflare), read with an admin token from the environment. Only names,
+sources: in the tally file names secret stores (gcp, aws, azure, github), read through their own CLI and login, a local
+Unix pass store (pass, read from the filesystem: names and file dates only), and provider key listings
+(anthropic, openai, openrouter, cloudflare), read with an admin token from the environment. Only names,
 dates and limits are read, never a value. --offline skips them all.
 Exit codes: 0 ok, 1 error, 2 usage, 3 action findings, so rotate the keys they name.`;
 
@@ -118,45 +122,66 @@ function usageDate(flag: string, value: string): string {
 }
 
 function parse(args: readonly string[]): Flags {
-  const flags: Flags = {
-    positional: [],
-    json: false,
-    help: false,
-    version: false,
-    locations: [],
-    dryRun: false,
-    offline: false,
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    const value = () => {
-      const next = args[++i];
-      if (next === undefined) throw new UsageError(`${arg} needs a value`);
-      return next;
-    };
-    if (arg === "--json") flags.json = true;
-    else if (arg === "--help" || arg === "-h") flags.help = true;
-    else if (arg === "--version") flags.version = true;
-    else if (arg === "--dry-run") flags.dryRun = true;
-    else if (arg === "--offline") flags.offline = true;
-    else if (arg === "--config") flags.config = value();
-    else if (arg === "--today") flags.today = usageDate(arg, value());
-    else if (arg === "--group") flags.group = value();
-    else if (arg === "--service") flags.service = value();
-    else if (arg === "--owner") flags.owner = value();
-    else if (arg === "--location") flags.locations.push(value());
-    else if (arg === "--expires") flags.expires = value();
-    else if (arg === "--expires-note") flags.expiresNote = value();
-    else if (arg === "--limit") flags.limit = value();
-    else if (arg === "--label") flags.label = value();
-    else if (arg === "--fingerprint") flags.fingerprint = value();
-    else if (arg === "--runbook") flags.runbook = value();
-    else if (arg === "--note") flags.note = value();
-    else if (arg === "--repo") flags.repo = value();
-    else if (arg.startsWith("-")) throw new UsageError(`unknown option ${withheld(arg)}`);
-    else flags.positional.push(arg);
+  let parsed: ReturnType<typeof options>;
+  try {
+    parsed = options(args);
+  } catch (error) {
+    throw new UsageError(withheld(error instanceof Error ? error.message : String(error)));
   }
-  return flags;
+  const { values, positionals } = parsed;
+  return {
+    positional: positionals,
+    json: values.json ?? false,
+    help: values.help ?? false,
+    version: values.version ?? false,
+    dryRun: values["dry-run"] ?? false,
+    offline: values.offline ?? false,
+    config: values.config,
+    today: values.today === undefined ? undefined : usageDate("--today", values.today),
+    group: values.group,
+    service: values.service,
+    owner: values.owner,
+    locations: values.location ?? [],
+    expires: values.expires,
+    expiresNote: values["expires-note"],
+    limit: values.limit,
+    label: values.label,
+    fingerprint: values.fingerprint,
+    runbook: values.runbook,
+    note: values.note,
+    repo: values.repo,
+  };
+}
+
+const cliOptions = {
+  json: { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+  version: { type: "boolean" },
+  "dry-run": { type: "boolean" },
+  offline: { type: "boolean" },
+  config: { type: "string" },
+  today: { type: "string" },
+  group: { type: "string" },
+  service: { type: "string" },
+  owner: { type: "string" },
+  location: { type: "string", multiple: true },
+  expires: { type: "string" },
+  "expires-note": { type: "string" },
+  limit: { type: "string" },
+  label: { type: "string" },
+  fingerprint: { type: "string" },
+  runbook: { type: "string" },
+  note: { type: "string" },
+  repo: { type: "string" },
+} as const;
+
+function options(args: readonly string[]) {
+  return parseArgs({
+    args: [...args],
+    allowPositionals: true,
+    strict: true,
+    options: cliOptions,
+  });
 }
 
 /** The nearest directory with `.git`, which is where a repository's `.tally.yaml` belongs. */
@@ -324,6 +349,8 @@ function schema() {
     version: packageJson.version,
     exitCodes: exit,
     commands: help,
+    options: cliOptions,
+    defaults: { terminal: "ui", nonTerminal: "schema" },
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
@@ -528,15 +555,11 @@ export async function main(args: string[], io: IO = {}): Promise<number> {
       write(json ? JSON.stringify({ version: packageJson.version }) : `tally ${packageJson.version}`);
       return exit.ok;
     }
-    const [command, ...rest] = flags.positional;
+    const [command = isTTY && !flags.json ? "ui" : "schema", ...rest] = flags.positional;
     if (flags.dryRun && command !== "issues") throw new UsageError("--dry-run only applies to issues sync");
     // A sync that skipped the stores would close their issues as if the findings had cleared.
-    if (flags.offline && !["check", "notify", "init", "ui"].includes(command ?? ""))
+    if (flags.offline && !["check", "notify", "init", "ui"].includes(command))
       throw new UsageError("--offline only applies to check, notify, init and ui");
-    if (command === undefined)
-      throw new UsageError(
-        "usage: tally init|check|ui|notify|list|validate|add|rotated|issues|schema, or tally --help",
-      );
     const result = await dispatch(flags, command, rest, io, env, cwd);
     if (!result.silent) write(json ? JSON.stringify(result.value) : (result.text ?? JSON.stringify(result.value)));
     return result.code ?? exit.ok;

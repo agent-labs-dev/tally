@@ -172,6 +172,8 @@ sources:
   - github: owner/name     # this repository's Actions and environment secrets
     filter: production     # optional: only these environments, comma-separated
   - github: my-org         # an organization's secrets
+  - pass: local            # a local Unix pass store; the scope is only a label
+    filter: wow/           # optional literal prefix of the entry names
 ```
 
 | Kind | Scope | Reads | Changed date |
@@ -180,11 +182,26 @@ sources:
 | `aws` | region | `aws secretsmanager list-secrets` | last rotation, else last change |
 | `azure` | vault name | `az keyvault secret list` | last update |
 | `github` | `OWNER/NAME` or an organization | `gh api` secret and environment listings | last update |
+| `pass` | a label you choose | the password store's directory listing | modified time of the `.gpg` file |
 
 tally runs each vendor's CLI with the login it already has. It runs only the listing commands above and refuses
 anything else, so it never prints, sets or backs up a value. Give it a role that cannot read
 values either: `roles/secretmanager.viewer` on GCP, `secretsmanager:ListSecrets` on AWS, and the `list` secret
 permission on Azure.
+
+### Unix pass
+
+`pass: local` reads `PASSWORD_STORE_DIR`, else `~/.password-store`. It lists directories and the modified time of each
+`.gpg` file, and nothing else: it never opens a file, runs `pass` or `gpg`, or decrypts. A missing or unreadable store
+fails the run, while an empty one is simply empty. `.git` and `.extensions` at the top are skipped, nested entries
+count, and a symlink under the root fails the run unread (the root itself may be one). `filter` is a literal prefix of
+the entry name, without `.gpg`, and the label in `pass: LABEL` is only a name for locations.
+
+Entry names, store labels and ignore entries are case-sensitive. A location is `pass: LABEL/wow/name` (or
+`pass: wow/name`) and matches that entry exactly.
+The changed date is when the ciphertext was last written, which is not proof of rotation: re-encrypting or touching
+the file moves it. Owner, expiry and limit stay in `.tally.yaml`. A pass entry is storage only, so `init` never drafts
+one or links it to another key by name; declare each by hand.
 
 ### Google Cloud annotations
 
@@ -296,7 +313,7 @@ read them, and pass them only to the tally step:
 
 ```sh
 tally init [--owner HANDLE]        # draft or extend .tally.yaml from workflows, env templates and stores
-tally ui                           # browse keys and findings in the terminal
+tally                              # browse keys and findings in the terminal
 tally check [--today DATE]         # expiring keys, missing facts and scan findings
 tally notify [--today DATE]        # check, then a desktop notification per action finding
 tally list [--group G] [--service S]
@@ -322,9 +339,8 @@ tally add payments-api \
 `expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. Global flags are
 `--config PATH` and `--json`. `--offline` skips the secret stores in `check`, `notify`, `init` and `ui`.
 
-`tally ui` lists every key with its most urgent finding first, and the facts and findings of the selected key beside
-it. `tab` switches to the list of findings, `/` filters, `s` changes the sort, `r` reloads and `q` quits. It needs a
-terminal and does not take `--json`.
+With a terminal, `tally` opens a terminal dashboard with the most urgent key first. Rows stay compact; `enter` expands or collapses the selected key's facts and findings below the list. It uses OpenTUI selection, input and scrolling controls. `tally ui` is an alias. `tab` switches to findings,
+`/` filters, `s` changes the sort, `r` reloads and `q` quits. `d` opens and focuses the details for scrolling; `esc` collapses them and returns to the list. Explicit `tally ui` needs a terminal and does not take `--json`. Bare `tally` outside a terminal, or with `--json`, prints the CLI schema without reading stores. The schema includes options from the standard parser.
 
 ## Daily issues
 

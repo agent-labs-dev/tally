@@ -69,7 +69,7 @@ function parseSources(value: unknown): Source[] | string {
     if (filter !== undefined && (typeof filter !== "string" || !filter)) return "a source filter must be text";
     // The name of an environment variable, never the token itself.
     if (token !== undefined) {
-      if (!stores[kind]?.api) return `${kind} reads through its CLI login and takes no token`;
+      if (!stores[kind]?.api) return `${kind} is not a provider API and takes no token`;
       if (typeof token !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(token))
         return "a source token is the NAME of an environment variable, in upper case";
     }

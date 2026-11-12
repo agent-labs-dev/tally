@@ -46,12 +46,16 @@ const report: Report = {
   ],
 };
 
-async function render(load: () => Promise<Report> = async () => report) {
+async function render(load: () => Promise<Report> = async () => report, expanded = true) {
   let setup!: Awaited<ReturnType<typeof testRender>>;
   await act(async () => {
     setup = await testRender(<App initial={report} load={load} onQuit={() => {}} />, { width: 100, height: 16 });
   });
   await setup.renderOnce();
+  if (expanded) {
+    await act(async () => setup.mockInput.pressKeys(["RETURN"]));
+    await setup.renderOnce();
+  }
   return setup;
 }
 
@@ -62,41 +66,254 @@ async function press(setup: Awaited<ReturnType<typeof testRender>>, keys: string
   await setup.renderOnce();
 }
 
-test("lists the most urgent key first with its detail beside it", async () => {
+const rowOf = (frame: string, text: string) => frame.split("\n").findIndex((line) => line.includes(text));
+
+test("lists the most urgent key first with its detail below", async () => {
   const setup = await render();
   try {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("2 action");
-    expect(frame.indexOf("payments-api")).toBeLessThan(frame.indexOf("mail-token"));
-    expect(frame).toContain("in 8 days");
+    expect(frame).toContain("▶ ! payments-api");
+    expect(rowOf(frame, "payments-api")).toBeLessThan(rowOf(frame, "mail-token"));
+    expect(rowOf(frame, "in 8 days")).toBeGreaterThan(rowOf(frame, "mail-token"));
     expect(frame).toContain("PAYMENTS_API_KEY");
   } finally {
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   }
 });
 
-test("tab shows findings, including secrets no key declares, and keeps the same height", async () => {
+test("the select moves the selection and the detail follows", async () => {
   const setup = await render();
   try {
-    const rows = setup.captureCharFrame().split("\n").length;
-    await press(setup, ["\t", "j"]);
+    await press(setup, ["j"]);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("▶ ✓ mail-token");
+    expect(frame).toContain("MAIL_TOKEN");
+    expect(frame).not.toContain("PAYMENTS_API_KEY");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("tab shows findings, including secrets no key declares, with the list and detail in place", async () => {
+  const setup = await render();
+  try {
+    const listRow = rowOf(setup.captureCharFrame(), "mail-token");
+    const detailRow = rowOf(setup.captureCharFrame(), "service");
+    await press(setup, ["\t"]);
+    expect(rowOf(setup.captureCharFrame(), "service")).toBe(detailRow);
+    await press(setup, ["j"]);
     const frame = setup.captureCharFrame();
     expect(frame).toContain("findings");
     expect(frame).toContain("NEW_TOKEN is used but not declared");
-    expect(frame.split("\n").length).toBe(rows);
+    expect(rowOf(frame, "NEW_TOKEN is used")).toBeGreaterThan(listRow);
   } finally {
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   }
 });
 
-test("a filter narrows the list", async () => {
-  const setup = await render();
+test("a filter narrows the list, and ctrl-c still quits while filtering", async () => {
+  let quit = 0;
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={report} load={async () => report} onQuit={() => quit++} />, {
+      width: 100,
+      height: 16,
+    });
+  });
+  await setup.renderOnce();
   try {
-    await press(setup, ["/", "m", "a", "i", "l", "\r"]);
+    // Slash and the text arrive before React renders, as when typed or pasted quickly.
+    await act(async () => {
+      for (const key of ["/", "m", "a", "i", "l", "\r"]) setup.mockInput.pressKey(key);
+    });
+    await setup.renderOnce();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("mail-token");
     expect(frame).not.toContain("payments-api");
+    await press(setup, ["/"]);
+    await act(async () => {
+      setup.mockInput.pressCtrlC();
+    });
+    expect(quit).toBe(1);
   } finally {
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+function longReport(): Report {
+  const entry = report.entries[0];
+  if (!entry) throw new Error("fixture");
+  return {
+    ...report,
+    entries: [
+      {
+        ...entry,
+        runbook: "https://example.com/runbooks/rotate-payments-key-end-of-details",
+        locations: Array.from({ length: 14 }, (_, i) => ({ kind: "env" as const, ref: `LOCATION_${i}` })),
+      },
+    ],
+    findings: [],
+  };
+}
+
+async function renderLong(width: number, height: number) {
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={longReport()} load={async () => longReport()} onQuit={() => {}} />, {
+      width,
+      height,
+    });
+  });
+  await setup.renderOnce();
+  return setup;
+}
+
+test("d focuses the details, which scroll to the last location, and esc returns to the list", async () => {
+  const setup = await renderLong(100, 16);
+  try {
+    expect(setup.captureCharFrame()).not.toContain("LOCATION_13");
+    await press(setup, ["d"]);
+    await press(
+      setup,
+      Array.from({ length: 20 }, () => "j"),
+    );
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("LOCATION_13");
+    expect(frame).toContain("details");
+    await act(async () => {
+      setup.mockInput.pressEscape();
+      await Bun.sleep(50);
+    });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("details ·");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("a long runbook wraps in the details instead of being cut off", async () => {
+  const setup = await renderLong(40, 24);
+  try {
+    await press(setup, ["RETURN"]);
+    expect(setup.captureCharFrame().replace(/\s+/g, "")).toContain("end-of-details");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("the hints wrap between bindings in a narrow terminal and keep q quit", async () => {
+  const setup = await renderLong(24, 16);
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("q quit");
+    expect(frame).toContain("/ filter");
+    expect(frame).not.toMatch(/q qu\s*$/m);
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("on a short terminal the details shrink and the list keeps a row", async () => {
+  const setup = await renderLong(100, 8);
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("payments-api");
+    expect(frame).toContain("q quit");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("keys typed in the same batch as the slash are filter text, not app actions", async () => {
+  let quit = 0;
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={report} load={async () => report} onQuit={() => quit++} />, {
+      width: 100,
+      height: 16,
+    });
+  });
+  await setup.renderOnce();
+  try {
+    await act(async () => {
+      for (const key of ["/", "q", "s", "r"]) setup.mockInput.pressKey(key);
+    });
+    await setup.renderOnce();
+    expect(quit).toBe(0);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("filter: qsr");
+    expect(frame).toContain("nothing matches");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("reload resets the selected row and details together after the list shrinks then grows", async () => {
+  const template = report.entries[1];
+  if (!template) throw new Error("fixture");
+  const full: Report = {
+    ...report,
+    entries: Array.from({ length: 6 }, (_, i) => ({ ...template, id: `key-${i}`, runbook: `book-${i}` })),
+    findings: [],
+  };
+  let next = { ...full, entries: full.entries.slice(0, 3) };
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={full} load={async () => next} onQuit={() => {}} />, {
+      width: 100,
+      height: 24,
+    });
+  });
+  await setup.renderOnce();
+  try {
+    await press(setup, ["RETURN"]);
+    await press(setup, ["j", "j", "j", "j", "j"]);
+    await press(setup, ["r"]);
+    next = full;
+    await press(setup, ["r"]);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("▶ ✓ key-0");
+    expect(frame).toContain("book-0");
+    expect(frame).not.toContain("book-5");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("compact rows show their group and filter by it", async () => {
+  const entry = report.entries[0];
+  if (!entry) throw new Error("fixture");
+  const grouped: Report = { ...report, entries: [{ ...entry, group: "owner-name" }], findings: [] };
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={grouped} load={async () => grouped} onQuit={() => {}} />, {
+      width: 100,
+      height: 16,
+    });
+  });
+  await setup.renderOnce();
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame.split("\n")[0]).toContain("0 action · 0 gaps · 1 keys · 1 groups");
+    expect(frame).toContain("owner-name / payments-api");
+    await press(setup, ["/", "o", "w", "n", "e", "r", "-", "n", "\r"]);
+    expect(setup.captureCharFrame()).toContain("payments-api");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("details start collapsed and the select toggles them without changing selection", async () => {
+  const setup = await render(async () => report, false);
+  try {
+    expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
+    await press(setup, ["RETURN"]);
+    expect(setup.captureCharFrame()).toContain("PAYMENTS_API_KEY");
+    await press(setup, ["RETURN"]);
+    expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
+    expect(setup.captureCharFrame()).toContain("▶ ! payments-api");
+  } finally {
+    await act(async () => setup.renderer.destroy());
   }
 });

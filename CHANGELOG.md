@@ -7,6 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Agents can start with bare `tally`.** Outside a terminal it prints schema JSON, including the standard parser's option definitions. Interactive terminals open the dashboard.
+
+- **Run `tally` to open the dashboard.** The compact, borderless list follows the terminal palette. Details start collapsed and `enter` expands or collapses them below
+  and keyboard hints at the bottom. Selection uses the terminal accent colour with contrasting text, while a separate navigation row keeps the overview readable. OpenTUI handles selection, scrolling and filter editing. `tally ui` remains an alias.
+- **CLI options use the standard parser.** Options accept `--name=value`, repeated locations and the `--` separator.
+
+- **A local Unix pass store is a source.** `pass: LABEL` (optionally with a `filter` name prefix) lists the entries under
+  `PASSWORD_STORE_DIR` or `~/.password-store` with the modified time of each `.gpg` file, from directory listings only:
+  nothing is decrypted or read. Names are case-sensitive, symlinks and a missing store fail the run, and `init` never
+  drafts or links a pass entry. The date is when the ciphertext changed, not proof of rotation.
 - **Google Cloud annotations carry credential facts.** `tally-owner`, `tally-service`, `tally-expires`,
   `tally-expires-note`, `tally-limit` and `tally-runbook` fill an entry's unknown owner, service, expiry, limit and
   runbook. Values in `.tally.yaml` win, conflicting annotations fail the run, and nothing is written to the file.
