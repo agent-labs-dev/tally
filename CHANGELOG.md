@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Run `tally` to open the dashboard.** The compact, borderless list follows the terminal palette, with details below
+  and keyboard hints at the bottom. OpenTUI handles selection, scrolling and filter editing. `tally ui` remains an alias.
+- **CLI options use the standard parser.** Options accept `--name=value`, repeated locations and the `--` separator.
+
 - **A local Unix pass store is a source.** `pass: LABEL` (optionally with a `filter` name prefix) lists the entries under
   `PASSWORD_STORE_DIR` or `~/.password-store` with the modified time of each `.gpg` file, from directory listings only:
   nothing is decrypted or read. Names are case-sensitive, symlinks and a missing store fail the run, and `init` never

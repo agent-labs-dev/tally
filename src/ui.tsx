@@ -1,31 +1,49 @@
-import type { KeyEvent } from "@opentui/core";
+import {
+  type InputRenderable,
+  RGBA,
+  type ScrollBoxRenderable,
+  type SelectOption,
+  type SelectRenderable,
+  TextAttributes,
+} from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type { Report } from "./cli";
 import type { Finding } from "./reconcile";
 import { type Entry, withheld } from "./schema";
 
+// Terminal palette entries, so the colours follow the terminal's theme. Unset text is the terminal's own
+// foreground rather than OpenTUI's fixed white.
 const color = {
-  bg: "#121113",
-  bg2: "#222222",
-  fg: "#b0b0b0",
-  fgBright: "#d0d0d0",
-  fgDim: "#777777",
-  comment: "#555555",
-  orange: "#e78a53",
-  peach: "#fbcb97",
-  yellow: "#e5c46b",
-  red: "#c75a5a",
-  green: "#6a9955",
+  text: RGBA.defaultForeground(),
+  accent: RGBA.fromIndex(6),
+  peach: RGBA.fromIndex(3),
+  yellow: RGBA.fromIndex(3),
+  red: RGBA.fromIndex(1),
+  green: RGBA.fromIndex(2),
+  orange: RGBA.fromIndex(9),
+  none: RGBA.fromValues(0, 0, 0, 0),
 };
+
+// The details pane is the same height in both tabs, so switching tabs never moves a line. It shrinks on a short
+// terminal, never below one row, and keeps the list at least MIN_LIST rows.
+const DETAIL_ROWS = 9;
+const MIN_LIST = 3;
+// Header, status line and at least one hints row.
+const CHROME_ROWS = 3;
+
+type Mode = "list" | "details" | "filter";
+
+// The same units in every mode and tab, so the hints wrap to the same rows and nothing below the list moves.
+const hints = ["↑↓ move", "d details", "tab view", "/ filter", "s sort", "r reload", "esc back", "q quit"];
 
 /** How urgent a key is, from its findings. The order is the default sort. */
 type State = "expired" | "expiring" | "action" | "gap" | "ok";
-const states: Record<State, { mark: string; fg: string; rank: number }> = {
+const states: Record<State, { mark: string; fg: RGBA; rank: number }> = {
   expired: { mark: "✗", fg: color.red, rank: 0 },
   expiring: { mark: "!", fg: color.yellow, rank: 1 },
   action: { mark: "!", fg: color.orange, rank: 2 },
-  gap: { mark: "?", fg: color.fgDim, rank: 3 },
+  gap: { mark: "?", fg: color.text, rank: 3 },
   ok: { mark: "✓", fg: color.green, rank: 4 },
 };
 
@@ -75,24 +93,28 @@ function matches(needle: string, ...fields: (string | undefined)[]): boolean {
   return !needle || fields.some((field) => field?.toLowerCase().includes(needle));
 }
 
-/** Text cut to `width` columns, with an ellipsis when it did not fit. */
-function fit(text: string, width: number): string {
-  if (width <= 0) return "";
-  return text.length <= width ? text.padEnd(width) : `${text.slice(0, width - 1)}…`;
+const DIM = TextAttributes.DIM;
+
+/** One row, clipped. Details use `wrap` so a long runbook or location is read in the scrolling pane, not cut off. */
+function Line({ children, fg, wrap }: { children: ReactNode; fg?: RGBA; wrap?: boolean }) {
+  return wrap ? (
+    <text flexShrink={0} wrapMode="word" fg={fg ?? color.text}>
+      {children}
+    </text>
+  ) : (
+    <text height={1} flexShrink={0} wrapMode="none" truncate fg={fg ?? color.text}>
+      {children}
+    </text>
+  );
 }
 
-function printable(key: KeyEvent): string | undefined {
-  if (key.ctrl || key.meta) return undefined;
-  return key.sequence.length === 1 && key.sequence >= " " ? key.sequence : undefined;
-}
-
-function Field({ label, value, fg }: { label: string; value?: string; fg?: string }) {
+function Field({ label, value, fg }: { label: string; value?: string; fg?: RGBA }) {
   if (!value) return null;
   return (
-    <text wrapMode="word">
-      <span fg={color.comment}>{label.padEnd(10)}</span>
-      <span fg={fg ?? color.fg}>{value}</span>
-    </text>
+    <Line wrap>
+      <span attributes={DIM}>{label.padEnd(10)}</span>
+      <span fg={fg}>{value}</span>
+    </Line>
   );
 }
 
@@ -100,18 +122,14 @@ function FindingLines({ findings }: { findings: readonly Finding[] }) {
   return (
     <>
       {findings.map((finding) => (
-        <box key={finding.id} flexDirection="column">
-          <text wrapMode="word">
-            <span fg={finding.severity === "action" ? color.orange : color.fgDim}>
+        <box key={finding.id} flexDirection="column" flexShrink={0}>
+          <Line wrap>
+            <span fg={finding.severity === "action" ? color.orange : undefined}>
               {finding.severity === "action" ? "! " : "? "}
             </span>
-            <span fg={color.fgBright}>{finding.title}</span>
-          </text>
-          {finding.detail ? (
-            <text wrapMode="word" fg={color.fgDim}>
-              {`  ${finding.detail}`}
-            </text>
-          ) : null}
+            <span>{finding.title}</span>
+          </Line>
+          {finding.detail ? <Line wrap>{`  ${finding.detail}`}</Line> : null}
         </box>
       ))}
     </>
@@ -125,10 +143,10 @@ function KeyDetail({ row }: { row: KeyRow }) {
       ? entry.expires
       : `${entry.expires} (${row.days < 0 ? `${-row.days} days ago` : `in ${row.days} days`})`;
   return (
-    <box flexDirection="column">
-      <text fg={states[row.state].fg} attributes={1}>
-        {entry.id}
-      </text>
+    <>
+      <Line wrap fg={states[row.state].fg}>
+        <b>{entry.id}</b>
+      </Line>
       <Field label="service" value={entry.service} />
       <Field label="group" value={entry.group} />
       <Field label="owner" value={entry.owner} />
@@ -140,16 +158,14 @@ function KeyDetail({ row }: { row: KeyRow }) {
       <Field label="rotated" value={entry.rotated} />
       <Field label="runbook" value={entry.runbook} />
       <Field label="note" value={entry.note} />
-      <text fg={color.comment}>stored in</text>
       {entry.locations.map((location) => (
-        <text key={`${location.kind}:${location.ref}`} wrapMode="none">
-          <span fg={color.peach}>{`  ${location.kind}`}</span>
-          <span fg={color.fg}>{`  ${location.ref}`}</span>
-        </text>
+        <Line wrap key={`${location.kind}:${location.ref}`}>
+          <span fg={color.peach}>{`${"stored in".padEnd(10)}${location.kind}`}</span>
+          <span>{`  ${location.ref}`}</span>
+        </Line>
       ))}
-      {row.findings.length > 0 ? <text> </text> : null}
       <FindingLines findings={row.findings} />
-    </box>
+    </>
   );
 }
 
@@ -165,13 +181,10 @@ export function App({ initial, load, onQuit }: AppProps) {
   const [view, setView] = useState<View>("keys");
   const [sort, setSort] = useState<Sort>("urgency");
   const [filter, setFilter] = useState("");
-  const [typing, setTypingState] = useState(false);
-  // Keys that arrive together, as in a paste, are handled before the next render, so the mode they read is a ref.
-  const typingNow = useRef(false);
-  const setTyping = (value: boolean) => {
-    typingNow.current = value;
-    setTypingState(value);
-  };
+  const [mode, setMode] = useState<Mode>("list");
+  const inputRef = useRef<InputRenderable>(null);
+  const selectRef = useRef<SelectRenderable>(null);
+  const detailRef = useRef<ScrollBoxRenderable>(null);
   const [cursor, setCursor] = useState(0);
   const [status, setStatus] = useState("");
 
@@ -188,8 +201,7 @@ export function App({ initial, load, onQuit }: AppProps) {
   );
   const findings = report.findings.filter((finding) => matches(needle, finding.kind, finding.key, finding.title));
   const count = view === "keys" ? keys.length : findings.length;
-  const last = Math.max(0, count - 1);
-  const at = Math.min(cursor, last);
+  const at = Math.min(cursor, Math.max(0, count - 1));
 
   const reload = () => {
     setStatus("reading…");
@@ -202,41 +214,68 @@ export function App({ initial, load, onQuit }: AppProps) {
     );
   };
 
+  const refilter = (value: string) => {
+    setFilter(value);
+    setCursor(0);
+  };
+
+  const toList = () => {
+    setMode("list");
+    selectRef.current?.focus();
+  };
+
+  // Application actions only: the select owns navigation, the input owns editing and the scrollbox owns scrolling.
+  // A key can arrive in the same batch as the one before it, before React has rendered, so the widgets' own focus
+  // is the truth. Moving focus here and calling preventDefault keeps the key from also reaching the old widget.
   useKeyboard((key) => {
-    if (typingNow.current) {
-      if (key.name === "return" || key.name === "escape") setTyping(false);
-      if (key.name === "escape") setFilter("");
-      else if (key.name === "backspace") setFilter((value) => value.slice(0, -1));
-      else {
-        const char = printable(key);
-        if (char) setFilter((value) => value + char);
+    if (key.ctrl && key.name === "c") return onQuit();
+    if (inputRef.current?.focused) {
+      if (key.name === "escape") {
+        key.preventDefault();
+        refilter("");
+        toList();
       }
-      setCursor(0);
       return;
     }
-    if (key.name === "q" || (key.ctrl && key.name === "c")) onQuit();
-    else if (key.name === "down" || key.name === "j") setCursor((value) => Math.min(Math.min(value, last) + 1, last));
-    else if (key.name === "up" || key.name === "k") setCursor((value) => Math.max(Math.min(value, last) - 1, 0));
-    else if (key.name === "pagedown") setCursor((value) => Math.min(Math.min(value, last) + 10, last));
-    else if (key.name === "pageup") setCursor((value) => Math.max(Math.min(value, last) - 10, 0));
-    else if (key.name === "g") setCursor(0);
+    if (key.ctrl || key.meta) return;
+    if (key.name === "escape") {
+      key.preventDefault();
+      if (detailRef.current?.focused) toList();
+      else refilter("");
+    } else if (key.name === "q") onQuit();
     else if (key.name === "tab") {
+      key.preventDefault();
       setView(view === "keys" ? "findings" : "keys");
       setCursor(0);
-    } else if (key.name === "s" && view === "keys")
+      toList();
+    } else if (key.name === "d" && count > 0) {
+      key.preventDefault();
+      setMode("details");
+      detailRef.current?.focus();
+    } else if (key.name === "s" && view === "keys") {
       setSort(sorts[(sorts.indexOf(sort) + 1) % sorts.length] ?? "urgency");
-    else if (key.name === "/") setTyping(true);
-    else if (key.name === "escape") setFilter("");
-    else if (key.name === "r") reload();
+      setCursor(0);
+    } else if (key.name === "/") {
+      key.preventDefault();
+      setMode("filter");
+      inputRef.current?.focus();
+    } else if (key.name === "r") reload();
   });
 
   const action = report.findings.filter((finding) => finding.severity === "action").length;
   const gaps = report.findings.length - action;
-  const listWidth = Math.max(30, Math.min(64, Math.floor(width * 0.45)));
-  // Header, footer and the two border rows: the list keeps one fixed height whichever tab is shown.
-  const rows = Math.max(1, height - 4);
-  const first = Math.max(0, Math.min(at - Math.floor(rows / 2), count - rows));
-  const inner = listWidth - 2;
+  const detailRows = Math.min(DETAIL_ROWS, Math.max(1, height - CHROME_ROWS - MIN_LIST));
+
+  const options: SelectOption[] =
+    view === "keys"
+      ? keys.map((row) => ({
+          name: `${states[row.state].mark} ${row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
+          description: "",
+        }))
+      : findings.map((finding) => ({
+          name: `${finding.severity === "action" ? "!" : "?"} ${finding.kind}  ${finding.key}`,
+          description: "",
+        }));
 
   const selectedKey = view === "keys" ? keys[at] : undefined;
   const selectedFinding = view === "findings" ? findings[at] : undefined;
@@ -245,94 +284,91 @@ export function App({ initial, load, onQuit }: AppProps) {
     : undefined;
 
   return (
-    <box flexDirection="column" backgroundColor={color.bg} flexGrow={1}>
-      <text wrapMode="none">
-        <span fg={color.fgBright} attributes={1}>
-          tally
+    <box flexDirection="column" width={width} height={height} paddingLeft={1} paddingRight={1} overflow="hidden">
+      <Line>
+        <span fg={color.accent}>
+          <b>tally</b>
         </span>
-        <span
-          fg={color.comment}
-        >{` ${withheld(report.repo ?? report.path)} · ${report.today} · ${report.entries.length} keys · `}</span>
+        <span attributes={DIM}>{` ${view === "keys" ? `keys · ${sort}` : "findings"} · `}</span>
+        <span>{`${withheld(report.repo ?? report.path)} · ${report.today} · ${report.entries.length} keys · `}</span>
         <span fg={action ? color.orange : color.green}>{`${action} action`}</span>
-        <span fg={color.comment}>{` · ${gaps} gaps`}</span>
-        {filter || typing ? <span fg={color.peach}>{`  /${filter}${typing ? "▏" : ""}`}</span> : null}
-        {status ? <span fg={color.yellow}>{`  ${status}`}</span> : null}
-      </text>
-      <box flexDirection="row" flexGrow={1}>
-        <box
-          width={listWidth}
-          border
-          borderStyle="rounded"
-          borderColor={color.comment}
-          title={view === "keys" ? ` keys · ${sort} ` : " findings "}
-          titleColor={color.fgDim}
-          flexDirection="column"
-        >
-          {count === 0 ? (
-            <text fg={color.comment}>{filter ? "nothing matches" : "nothing here"}</text>
-          ) : view === "keys" ? (
-            keys.slice(first, first + rows).map((row, index) => {
-              const active = first + index === at;
-              const when = row.days === undefined ? row.entry.expires : `${row.days}d`;
-              return (
-                <box key={row.entry.id} backgroundColor={active ? color.bg2 : undefined}>
-                  <text wrapMode="none">
-                    <span fg={states[row.state].fg}>{`${states[row.state].mark} `}</span>
-                    <span fg={active ? color.fgBright : color.fg}>{fit(row.entry.id, inner - 11)}</span>
-                    <span fg={row.days !== undefined ? states[row.state].fg : color.comment}>{when.padStart(9)}</span>
-                  </text>
-                </box>
-              );
-            })
-          ) : (
-            findings.slice(first, first + rows).map((finding, index) => {
-              const active = first + index === at;
-              return (
-                <box key={finding.id} backgroundColor={active ? color.bg2 : undefined}>
-                  <text wrapMode="none">
-                    <span fg={finding.severity === "action" ? color.orange : color.fgDim}>
-                      {finding.severity === "action" ? "! " : "? "}
-                    </span>
-                    <span fg={color.comment}>{fit(finding.kind, 15)}</span>
-                    <span fg={active ? color.fgBright : color.fg}>{fit(finding.key, inner - 17)}</span>
-                  </text>
-                </box>
-              );
-            })
-          )}
-        </box>
-        <box
-          flexGrow={1}
-          border
-          borderStyle="rounded"
-          borderColor={color.comment}
-          flexDirection="column"
-          paddingLeft={1}
-        >
-          {selectedKey ? <KeyDetail row={selectedKey} /> : null}
-          {selectedFinding ? (
-            findingEntry ? (
-              <KeyDetail row={findingEntry} />
-            ) : (
-              <box flexDirection="column">
-                <text fg={color.orange} attributes={1}>
-                  {selectedFinding.key}
-                </text>
-                <FindingLines findings={[selectedFinding]} />
-              </box>
-            )
-          ) : null}
-        </box>
+        <span attributes={DIM}>{` · ${gaps} gaps`}</span>
+      </Line>
+      <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
+        {count === 0 ? (
+          <Line>
+            <span attributes={DIM}>{filter ? "nothing matches" : "nothing here"}</span>
+          </Line>
+        ) : (
+          <select
+            ref={selectRef}
+            key={`${view}:${sort}:${filter}`}
+            focused={mode === "list"}
+            flexGrow={1}
+            options={options}
+            showDescription={false}
+            backgroundColor={color.none}
+            focusedBackgroundColor={color.none}
+            selectedBackgroundColor={color.none}
+            textColor={color.text}
+            focusedTextColor={color.text}
+            selectedTextColor={color.accent}
+            onChange={(index) => setCursor(index)}
+          />
+        )}
       </box>
-      <text wrapMode="none" fg={color.comment}>
-        {typing
-          ? "type to filter · enter keep · esc clear"
-          : `↑↓ move · tab ${view === "keys" ? "findings" : "keys"} · / filter${view === "keys" ? " · s sort" : ""} · r reload · q quit`}
-      </text>
+      <scrollbox
+        ref={detailRef}
+        key={`${view}:${selectedKey?.entry.id ?? selectedFinding?.id}`}
+        focused={mode === "details"}
+        height={detailRows}
+        flexShrink={0}
+        backgroundColor={color.none}
+      >
+        {selectedKey ? <KeyDetail row={selectedKey} /> : null}
+        {selectedFinding ? (
+          findingEntry ? (
+            <KeyDetail row={findingEntry} />
+          ) : (
+            <>
+              <Line wrap fg={color.orange}>
+                <b>{selectedFinding.key}</b>
+              </Line>
+              <FindingLines findings={[selectedFinding]} />
+            </>
+          )
+        ) : null}
+      </scrollbox>
+      <box flexDirection="row" height={1} flexShrink={0}>
+        <text wrapMode="none" fg={color.accent} flexShrink={0} visible={mode === "filter"}>
+          {"filter: "}
+        </text>
+        <input
+          ref={inputRef}
+          focused={mode === "filter"}
+          visible={mode === "filter"}
+          flexGrow={mode === "filter" ? 1 : 0}
+          placeholder="type to filter · enter keeps · esc clears"
+          value={filter}
+          onInput={refilter}
+          onSubmit={toList}
+        />
+        {mode === "filter" ? null : (
+          <Line fg={status ? color.yellow : color.peach}>
+            {status || (mode === "details" ? "details · ↑↓ scroll · esc back" : filter ? `/${filter}` : " ")}
+          </Line>
+        )}
+      </box>
+      <box flexDirection="row" flexWrap="wrap" columnGap={3} flexShrink={0}>
+        {hints.map((hint) => (
+          <text key={hint} wrapMode="none" flexShrink={0} attributes={DIM} fg={color.text}>
+            {hint}
+          </text>
+        ))}
+      </box>
     </box>
   );
 }
-
 /** Takes the screen until the user quits. Only metadata is shown: the same fields `check` prints. */
 export async function showUi(initial: Report, load: () => Promise<Report>): Promise<void> {
   const [{ createCliRenderer }, { createRoot }] = await Promise.all([

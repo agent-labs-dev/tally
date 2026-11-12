@@ -197,7 +197,8 @@ fails the run, while an empty one is simply empty. `.git` and `.extensions` at t
 count, and a symlink under the root fails the run unread (the root itself may be one). `filter` is a literal prefix of
 the entry name, without `.gpg`, and the label in `pass: LABEL` is only a name for locations.
 
-Entry names, store labels and ignore entries are case-sensitive. A location is `pass: LABEL/wow/name` (or `pass: wow/name`) and matches that entry exactly.
+Entry names, store labels and ignore entries are case-sensitive. A location is `pass: LABEL/wow/name` (or
+`pass: wow/name`) and matches that entry exactly.
 The changed date is when the ciphertext was last written, which is not proof of rotation: re-encrypting or touching
 the file moves it. Owner, expiry and limit stay in `.tally.yaml`. A pass entry is storage only, so `init` never drafts
 one or links it to another key by name; declare each by hand.
@@ -312,7 +313,7 @@ read them, and pass them only to the tally step:
 
 ```sh
 tally init [--owner HANDLE]        # draft or extend .tally.yaml from workflows, env templates and stores
-tally ui                           # browse keys and findings in the terminal
+tally                              # browse keys and findings in the terminal
 tally check [--today DATE]         # expiring keys, missing facts and scan findings
 tally notify [--today DATE]        # check, then a desktop notification per action finding
 tally list [--group G] [--service S]
@@ -338,9 +339,9 @@ tally add payments-api \
 `expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. Global flags are
 `--config PATH` and `--json`. `--offline` skips the secret stores in `check`, `notify`, `init` and `ui`.
 
-`tally ui` lists every key with its most urgent finding first, and the facts and findings of the selected key beside
-it. `tab` switches to the list of findings, `/` filters, `s` changes the sort, `r` reloads and `q` quits. It needs a
-terminal and does not take `--json`.
+`tally` opens a terminal dashboard with the most urgent key first and the selected key's facts and findings below
+the list. It uses OpenTUI selection, input and scrolling controls. `tally ui` is an alias. `tab` switches to findings,
+`/` filters, `s` changes the sort, `r` reloads and `q` quits. `d` focuses the details for scrolling; `esc` returns to the list. It needs a terminal and does not take `--json`.
 
 ## Daily issues
 

@@ -273,6 +273,33 @@ describe("cli", () => {
     expect(result.json).toEqual({ error: { code: "usage", message: "unknown command nonsense" } });
   });
 
+  test("no command uses the dashboard and keeps the non-terminal guard", async () => {
+    const { run } = harness();
+    const explicit = await run(["ui"]);
+    expect(await run([])).toEqual(explicit);
+    expect(explicit.code).toBe(2);
+    expect((await run(["--offline"])).json).toEqual(explicit.json);
+  });
+
+  test("standard options accept equals syntax, repeated locations and a positional separator", async () => {
+    const { config, run } = harness();
+    const result = await run([
+      "add",
+      "--service=example-provider",
+      "--owner=me",
+      "--location=pass:local/wow/Key",
+      "--location=env:API_KEY",
+      "--",
+      "api-key",
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.json.id).toBe("api-key");
+    expect((await loadTallyFile(config)).entries[0]?.locations).toEqual([
+      { kind: "pass", ref: "local/wow/Key" },
+      { kind: "env", ref: "API_KEY" },
+    ]);
+  });
+
   test("schema describes the CLI", async () => {
     const { run } = harness();
     const result = await run(["schema"]);
