@@ -273,12 +273,10 @@ describe("cli", () => {
     expect(result.json).toEqual({ error: { code: "usage", message: "unknown command nonsense" } });
   });
 
-  test("no command uses the dashboard and keeps the non-terminal guard", async () => {
+  test("bare non-terminal invocation discovers the CLI without loading credentials", async () => {
     const { run } = harness();
-    const explicit = await run(["ui"]);
-    expect(await run([])).toEqual(explicit);
-    expect(explicit.code).toBe(2);
-    expect((await run(["--offline"])).json).toEqual(explicit.json);
+    expect(await run([])).toEqual(await run(["schema"]));
+    expect((await run(["ui"])).code).toBe(2);
   });
 
   test("standard options accept equals syntax, repeated locations and a positional separator", async () => {

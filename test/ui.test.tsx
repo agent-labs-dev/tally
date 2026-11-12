@@ -274,3 +274,26 @@ test("reload resets the selected row and details together after the list shrinks
     await act(async () => setup.renderer.destroy());
   }
 });
+
+test("rows show group, service, owner and expiry, and the header leads with the counts", async () => {
+  const entry = report.entries[0];
+  if (!entry) throw new Error("fixture");
+  const grouped: Report = { ...report, entries: [{ ...entry, group: "owner-name" }], findings: [] };
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(<App initial={grouped} load={async () => grouped} onQuit={() => {}} />, {
+      width: 100,
+      height: 16,
+    });
+  });
+  await setup.renderOnce();
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame.split("\n")[0]).toContain("0 action · 0 gaps · 1 keys · 1 groups");
+    expect(frame).toContain("owner-name · payments · team-payments · 2026-11-10");
+    await press(setup, ["/", "o", "w", "n", "e", "r", "-", "n", "\r"]);
+    expect(setup.captureCharFrame()).toContain("payments-api");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});

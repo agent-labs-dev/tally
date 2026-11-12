@@ -32,6 +32,7 @@ Commands print JSON when stdout is not a terminal or with --json. Help and versi
   tally [--today YYYY-MM-DD] [--offline]
   tally ui [--today YYYY-MM-DD] [--offline]
                                  browse keys and findings in the terminal; r reloads, q quits
+                                 without a terminal, bare tally prints schema JSON
   tally notify [--today YYYY-MM-DD] [--offline]
                                  run check, then send a desktop notification per action finding
   tally list [--group G] [--service S]
@@ -152,32 +153,34 @@ function parse(args: readonly string[]): Flags {
   };
 }
 
+const cliOptions = {
+  json: { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+  version: { type: "boolean" },
+  "dry-run": { type: "boolean" },
+  offline: { type: "boolean" },
+  config: { type: "string" },
+  today: { type: "string" },
+  group: { type: "string" },
+  service: { type: "string" },
+  owner: { type: "string" },
+  location: { type: "string", multiple: true },
+  expires: { type: "string" },
+  "expires-note": { type: "string" },
+  limit: { type: "string" },
+  label: { type: "string" },
+  fingerprint: { type: "string" },
+  runbook: { type: "string" },
+  note: { type: "string" },
+  repo: { type: "string" },
+} as const;
+
 function options(args: readonly string[]) {
   return parseArgs({
     args: [...args],
     allowPositionals: true,
     strict: true,
-    options: {
-      json: { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-      version: { type: "boolean" },
-      "dry-run": { type: "boolean" },
-      offline: { type: "boolean" },
-      config: { type: "string" },
-      today: { type: "string" },
-      group: { type: "string" },
-      service: { type: "string" },
-      owner: { type: "string" },
-      location: { type: "string", multiple: true },
-      expires: { type: "string" },
-      "expires-note": { type: "string" },
-      limit: { type: "string" },
-      label: { type: "string" },
-      fingerprint: { type: "string" },
-      runbook: { type: "string" },
-      note: { type: "string" },
-      repo: { type: "string" },
-    },
+    options: cliOptions,
   });
 }
 
@@ -346,6 +349,8 @@ function schema() {
     version: packageJson.version,
     exitCodes: exit,
     commands: help,
+    options: cliOptions,
+    defaults: { terminal: "ui", nonTerminal: "schema" },
     entryFields:
       "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
@@ -550,7 +555,7 @@ export async function main(args: string[], io: IO = {}): Promise<number> {
       write(json ? JSON.stringify({ version: packageJson.version }) : `tally ${packageJson.version}`);
       return exit.ok;
     }
-    const [command = "ui", ...rest] = flags.positional;
+    const [command = isTTY && !flags.json ? "ui" : "schema", ...rest] = flags.positional;
     if (flags.dryRun && command !== "issues") throw new UsageError("--dry-run only applies to issues sync");
     // A sync that skipped the stores would close their issues as if the findings had cleared.
     if (flags.offline && !["check", "notify", "init", "ui"].includes(command))

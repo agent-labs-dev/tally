@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Agents can start with bare `tally`.** Outside a terminal it prints schema JSON, including the standard parser's option definitions. Interactive terminals open the dashboard.
+
 - **Run `tally` to open the dashboard.** The compact, borderless list follows the terminal palette, with details below
   and keyboard hints at the bottom. OpenTUI handles selection, scrolling and filter editing. `tally ui` remains an alias.
 - **CLI options use the standard parser.** Options accept `--name=value`, repeated locations and the `--` separator.

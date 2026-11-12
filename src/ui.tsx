@@ -12,22 +12,26 @@ import type { Report } from "./cli";
 import type { Finding } from "./reconcile";
 import { type Entry, withheld } from "./schema";
 
-// Terminal palette entries, so the colours follow the terminal's theme. Unset text is the terminal's own
-// foreground rather than OpenTUI's fixed white.
+// Terminal palette entries, so the colours follow the terminal's theme (light or dark) rather than a fixed hex
+// palette like Kiln's, which assumes a dark background. Unset text is the terminal's own foreground. The restrained
+// scheme is Kiln's: accent for chrome and the selection, orange and red only for what needs action, the rest dim.
 const color = {
   text: RGBA.defaultForeground(),
   accent: RGBA.fromIndex(6),
+  dim: RGBA.fromIndex(8),
   peach: RGBA.fromIndex(3),
   yellow: RGBA.fromIndex(3),
   red: RGBA.fromIndex(1),
   green: RGBA.fromIndex(2),
   orange: RGBA.fromIndex(9),
   none: RGBA.fromValues(0, 0, 0, 0),
+  // Bright black: a subtle band behind the selected row in most themes.
+  band: RGBA.fromIndex(8),
 };
 
-// The details pane is the same height in both tabs, so switching tabs never moves a line. It shrinks on a short
-// terminal, never below one row, and keeps the list at least MIN_LIST rows.
-const DETAIL_ROWS = 9;
+// The details pane (a titled top rule plus content) is the same height in both tabs, so switching tabs never moves
+// a line. It shrinks on a short terminal, never below one row, and keeps the list at least MIN_LIST rows.
+const DETAIL_ROWS = 8;
 const MIN_LIST = 3;
 // Header, status line and at least one hints row.
 const CHROME_ROWS = 3;
@@ -144,9 +148,6 @@ function KeyDetail({ row }: { row: KeyRow }) {
       : `${entry.expires} (${row.days < 0 ? `${-row.days} days ago` : `in ${row.days} days`})`;
   return (
     <>
-      <Line wrap fg={states[row.state].fg}>
-        <b>{entry.id}</b>
-      </Line>
       <Field label="service" value={entry.service} />
       <Field label="group" value={entry.group} />
       <Field label="owner" value={entry.owner} />
@@ -265,17 +266,20 @@ export function App({ initial, load, onQuit }: AppProps) {
 
   const action = report.findings.filter((finding) => finding.severity === "action").length;
   const gaps = report.findings.length - action;
+  const groups = new Set(report.entries.map((entry) => entry.group).filter(Boolean)).size;
   const detailRows = Math.min(DETAIL_ROWS, Math.max(1, height - CHROME_ROWS - MIN_LIST));
 
   const options: SelectOption[] =
     view === "keys"
       ? keys.map((row) => ({
           name: `${states[row.state].mark} ${row.entry.id}  ${row.days === undefined ? row.entry.expires : `${row.days}d`}`,
-          description: "",
+          description: [row.entry.group, row.entry.service, row.entry.owner, row.entry.expires]
+            .filter(Boolean)
+            .join(" · "),
         }))
       : findings.map((finding) => ({
           name: `${finding.severity === "action" ? "!" : "?"} ${finding.kind}  ${finding.key}`,
-          description: "",
+          description: finding.title,
         }));
 
   const selectedKey = view === "keys" ? keys[at] : undefined;
@@ -290,10 +294,21 @@ export function App({ initial, load, onQuit }: AppProps) {
         <span fg={color.accent}>
           <b>tally</b>
         </span>
-        <span attributes={DIM}>{` ${view === "keys" ? `keys · ${sort}` : "findings"} · `}</span>
-        <span>{`${withheld(report.repo ?? report.path)} · ${report.today} · ${report.entries.length} keys · `}</span>
-        <span fg={action ? color.orange : color.green}>{`${action} action`}</span>
-        <span attributes={DIM}>{` · ${gaps} gaps`}</span>
+        <span fg={action ? color.orange : color.green}>{`  ${action} action`}</span>
+        <span
+          attributes={DIM}
+        >{` · ${gaps} gaps · ${report.entries.length} keys${groups ? ` · ${groups} groups` : ""}  `}</span>
+        <span fg={view === "keys" ? color.accent : undefined} attributes={view === "keys" ? TextAttributes.BOLD : DIM}>
+          keys
+        </span>
+        <span attributes={DIM}>{" · "}</span>
+        <span
+          fg={view === "findings" ? color.accent : undefined}
+          attributes={view === "findings" ? TextAttributes.BOLD : DIM}
+        >
+          findings
+        </span>
+        <span attributes={DIM}>{` · by ${sort} · ${withheld(report.repo ?? report.path)}`}</span>
       </Line>
       <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         {count === 0 ? (
@@ -308,10 +323,12 @@ export function App({ initial, load, onQuit }: AppProps) {
             flexGrow={1}
             options={options}
             selectedIndex={at}
-            showDescription={false}
+            showDescription
+            descriptionColor={color.dim}
+            selectedDescriptionColor={color.text}
             backgroundColor={color.none}
             focusedBackgroundColor={color.none}
-            selectedBackgroundColor={color.none}
+            selectedBackgroundColor={color.band}
             textColor={color.text}
             focusedTextColor={color.text}
             selectedTextColor={color.accent}
@@ -326,18 +343,16 @@ export function App({ initial, load, onQuit }: AppProps) {
         height={detailRows}
         flexShrink={0}
         backgroundColor={color.none}
+        border={["top"]}
+        borderColor={mode === "details" ? color.accent : color.dim}
+        title={` ${selectedKey?.entry.id ?? selectedFinding?.key ?? ""} `}
       >
         {selectedKey ? <KeyDetail row={selectedKey} /> : null}
         {selectedFinding ? (
           findingEntry ? (
             <KeyDetail row={findingEntry} />
           ) : (
-            <>
-              <Line wrap fg={color.orange}>
-                <b>{selectedFinding.key}</b>
-              </Line>
-              <FindingLines findings={[selectedFinding]} />
-            </>
+            <FindingLines findings={[selectedFinding]} />
           )
         ) : null}
       </scrollbox>
