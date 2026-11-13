@@ -86,7 +86,8 @@ function randomLooking(token: string): boolean {
 /** True for text that could be a credential: a known prefix, or a long random-looking token. */
 export function looksSecret(text: string): boolean {
   if (secretPatterns.some((pattern) => pattern.test(text))) return true;
-  return text.split(/[\s/:,#;="'`]+/).some(randomLooking);
+  // `@` separates the parts of an account name such as `reader@example-project-123456`, which is not random.
+  return text.split(/[\s/:,#;="'`@]+/).some(randomLooking);
 }
 
 /** Error messages echo user input; this keeps a pasted key out of them. */

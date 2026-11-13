@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **An account name in a note no longer looks like a credential.** The guard now splits text at `@` too, so a
+  service account name such as `reader@example-project-123456` passes validation.
+
+- **The tally skill reviews every key.** A new section walks an agent through coverage, missing facts, expiries
+  and limits the provider offers, and stale keys, so a clean `check` is not mistaken for an up-to-date registry.
+
 - **Agents can start with bare `tally`.** Outside a terminal it prints schema JSON, including the standard parser's option definitions. Interactive terminals open the dashboard.
 
 - **Run `tally` to open the dashboard.** It opens at once from the tally file and fills in what the secret stores
