@@ -25,6 +25,8 @@ export type Action =
   | { do: "close"; marker: string; number: number; title: string };
 
 const markerPattern = /<!-- tally:(\S+) -->/;
+/** Records who tally assigned, so a later sync removes that person, and only them, when the assignee changes. */
+const assigneePattern = /<!-- tally-assignee:(\S+) -->/;
 const gapsMarker = "gaps";
 
 function runbookLink(runbook: string): string {
@@ -80,15 +82,17 @@ export function desiredIssues(
     if (finding.severity !== "action") continue;
     const entry = byId.get(finding.key);
     const header = `<!-- tally:${finding.id} -->`;
+    const login = assignee(entry?.owner);
+    const body = entry
+      ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
+      : [header, finding.detail ?? finding.title].join("\n\n");
     desired.push({
       marker: finding.id,
       title: finding.title,
       labels: [label, `tally:${finding.kind}`],
       severity: "action",
-      assignee: assignee(entry?.owner),
-      body: entry
-        ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
-        : [header, finding.detail ?? finding.title].join("\n\n"),
+      assignee: login,
+      body: login === undefined ? body : `${body}\n\n<!-- tally-assignee:${login} -->`,
     });
   }
   const gaps = findings.filter((finding) => finding.severity === "gap");
@@ -200,7 +204,14 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
     const current = (existing.labels ?? []).map((item) => item.name);
     const stale = current.filter((name) => name.startsWith("tally:") && !want.labels.includes(name));
     const missing = want.labels.filter((name) => !current.includes(name));
-    // The body names the owner, so an owner change always lands here and the new owner is added.
+    // The body records the assignee, so a change always lands here: the new one is added, and the one tally
+    // assigned before is removed, leaving anyone a person assigned by hand.
+    const previous = assigneePattern.exec(existing.body)?.[1];
+    const replaced = (existing.assignees ?? []).find(
+      (item) =>
+        item.login.toLowerCase() === previous?.toLowerCase() &&
+        item.login.toLowerCase() !== want.assignee?.toLowerCase(),
+    )?.login;
     const assigned =
       want.assignee === undefined ||
       (existing.assignees ?? []).some((item) => item.login.toLowerCase() === want.assignee?.toLowerCase());
@@ -233,6 +244,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
         want.body,
         ...missing.flatMap((name) => ["--add-label", name]),
         ...stale.flatMap((name) => ["--remove-label", name]),
+        ...(replaced ? ["--remove-assignee", replaced] : []),
       ],
       ...assign,
       action,

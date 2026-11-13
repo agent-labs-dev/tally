@@ -210,6 +210,34 @@ describe("syncIssues", () => {
     expect(writes(calls)).toEqual([["issue", "edit", "7", "--repo", "owner/repo", "--add-assignee", "team-payments"]]);
   });
 
+  test("replaces the assignee tally set before and keeps one a person added", async () => {
+    const owners = new Map([["team-payments", "Organization"]]);
+    const before = only(desiredIssues([expired], [entry()], { owners, orgAssignee: "old-oncall" }));
+    const after = only(desiredIssues([expired], [entry()], { owners, orgAssignee: "new-oncall" }));
+    const labels = before.labels.map((name) => ({ name }));
+    const assignees = [{ login: "old-oncall" }, { login: "reviewer" }];
+    const { calls, gh } = fakeGh([{ number: 7, title: before.title, body: before.body, labels, assignees }]);
+    await syncIssues(gh, "owner/repo", [after], false);
+    const [edit, assign] = writes(calls);
+    expect(edit).toContain("--remove-assignee");
+    expect(edit?.slice(-2)).toEqual(["--remove-assignee", "old-oncall"]);
+    expect(edit).not.toContain("reviewer");
+    expect(assign).toEqual(["issue", "edit", "7", "--repo", "owner/repo", "--add-assignee", "new-oncall"]);
+  });
+
+  test("unsetting the org assignee removes the person tally assigned", async () => {
+    const owners = new Map([["team-payments", "Organization"]]);
+    const before = only(desiredIssues([expired], [entry()], { owners, orgAssignee: "old-oncall" }));
+    const after = only(desiredIssues([expired], [entry()], { owners }));
+    const labels = before.labels.map((name) => ({ name }));
+    const { calls, gh } = fakeGh([
+      { number: 7, title: before.title, body: before.body, labels, assignees: [{ login: "old-oncall" }] },
+    ]);
+    await syncIssues(gh, "owner/repo", [after], false);
+    expect(writes(calls)).toHaveLength(1);
+    expect(writes(calls)[0]?.slice(-2)).toEqual(["--remove-assignee", "old-oncall"]);
+  });
+
   test("closes an open issue whose marker is no longer wanted", async () => {
     const { gh } = fakeGh([{ number: 9, title: "old key", body: "<!-- tally:expiry:gone -->" }]);
     const actions = await syncIssues(gh, "owner/repo", [], false);
