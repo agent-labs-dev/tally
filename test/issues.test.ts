@@ -64,15 +64,15 @@ describe("desiredIssues", () => {
   });
 
   test("an organization owner is not named as assignee", () => {
-    const orgOwner: Finding = {
-      id: "gap:payments-api:owner",
-      kind: "org-owner",
-      severity: "gap",
-      key: "payments-api",
-      title: "org",
-    };
-    const [want] = desiredIssues([expired, orgOwner], [entry()]);
+    const owners = new Map([["team-payments", "Organization"]]);
+    const [want] = desiredIssues([expired], [entry()], { owners });
     expect(want?.assignee).toBeUndefined();
+  });
+
+  test("an organization owner's issue goes to the org assignee", () => {
+    const owners = new Map([["team-payments", "Organization"]]);
+    const [want] = desiredIssues([expired], [entry()], { owners, orgAssignee: "on-call" });
+    expect(want?.assignee).toBe("on-call");
   });
 
   test("a finding with no entry uses its title and detail instead of a table", () => {

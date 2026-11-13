@@ -1,4 +1,4 @@
-import type { Finding, Severity } from "./reconcile";
+import type { Context, Finding, Severity } from "./reconcile";
 import type { Entry } from "./schema";
 
 /** Runs `gh` with these arguments and returns stdout. Injected so tests never touch GitHub. */
@@ -62,10 +62,19 @@ function rotationSteps(entry: Entry): string[] {
 }
 
 /** One issue per action finding, plus one digest for every gap. */
-export function desiredIssues(findings: readonly Finding[], entries: readonly Entry[]): Desired[] {
+export function desiredIssues(
+  findings: readonly Finding[],
+  entries: readonly Entry[],
+  { owners, orgAssignee }: Pick<Context, "owners" | "orgAssignee"> = {},
+): Desired[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  // gh always rejects an organization assignee, and the org-owner gap already reports it, so no retry each run.
-  const orgOwned = new Set(findings.filter((finding) => finding.kind === "org-owner").map((finding) => finding.key));
+  // gh always rejects an organization assignee, so an organization's keys go to orgAssignee, or to nobody.
+  const assignee = (owner: string | undefined) =>
+    owner === undefined || owner === "unknown"
+      ? undefined
+      : owners?.get(owner) === "Organization"
+        ? orgAssignee
+        : owner;
   const desired: Desired[] = [];
   for (const finding of findings) {
     if (finding.severity !== "action") continue;
@@ -76,7 +85,7 @@ export function desiredIssues(findings: readonly Finding[], entries: readonly En
       title: finding.title,
       labels: [label, `tally:${finding.kind}`],
       severity: "action",
-      assignee: entry?.owner === "unknown" || orgOwned.has(finding.key) ? undefined : entry?.owner,
+      assignee: assignee(entry?.owner),
       body: entry
         ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
         : [header, finding.detail ?? finding.title].join("\n\n"),

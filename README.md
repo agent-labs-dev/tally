@@ -382,6 +382,11 @@ Replace `OWNER/tally@v1` with the repository that publishes this action. The wor
 job needs `issues: write` and nothing else. The action's `config` input defaults to `.tally.yaml`, and it sets
 `TALLY_CONFIG` for the run, so pass `config:` only to use another path.
 
+GitHub cannot assign an issue to an organization, so a key whose `owner` is one gets an `org-owner` gap. To have a
+person receive those issues without writing their handle into the repository, pass it from a repository variable:
+`with: { org-assignee: ${{ vars.TALLY_ASSIGNEE }} }`. Outside the action, set `TALLY_ORG_ASSIGNEE`. With it set, the
+gap is not reported.
+
 ## Local machine mode
 
 Keys that live on one machine, and not in a repository, go in `~/.config/tally/tally.yaml` (or

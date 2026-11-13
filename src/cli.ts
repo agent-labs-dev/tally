@@ -252,6 +252,7 @@ async function buildContext(
           entries.map((entry) => entry.owner),
           io.run ?? runCommand,
         ),
+    orgAssignee: env.TALLY_ORG_ASSIGNEE || undefined,
   };
   return { context, entries };
 }
@@ -502,7 +503,7 @@ async function dispatch(
       const repo = flags.repo ?? loaded.config.issueRepo ?? env.GITHUB_REPOSITORY;
       const { context, entries } = await buildContext(flags, loaded, env, io);
       const findings = reconcile(entries, context);
-      const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, entries), flags.dryRun);
+      const actions = await syncIssues(io.gh ?? runGh, repo, desiredIssues(findings, entries, context), flags.dryRun);
       const text = actions
         .map((action) => {
           const unassigned = action.do !== "close" && action.unassigned ? ` (not assigned: ${action.unassigned})` : "";

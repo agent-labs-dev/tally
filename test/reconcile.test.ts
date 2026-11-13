@@ -126,9 +126,15 @@ describe("limitRule", () => {
         kind: "org-owner",
         severity: "gap",
         key: "payments-api",
-        title: "payments-api is owned by organization team-payments, which cannot be assigned an issue",
+        title:
+          "payments-api is owned by organization team-payments, which cannot be assigned an issue. Set TALLY_ORG_ASSIGNEE to assign one person instead",
       },
     ]);
+  });
+
+  test("an organization owner gives no gap when an org assignee is set", () => {
+    const owners = new Map([["team-payments", "Organization"]]);
+    expect(reconcile([entry()], { ...context, owners, orgAssignee: "on-call" })).toEqual([]);
   });
 
   test("an owner absent from the type map gives no organization finding", () => {
