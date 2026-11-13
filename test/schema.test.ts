@@ -92,6 +92,7 @@ describe("guard regressions", () => {
     expect(looksSecret("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8")).toBe(true);
     expect(looksSecret(`note ${"q7w3e9r2t5y8u1i4o6p0a2s5d8f1g4h7"}`)).toBe(true);
     expect(looksSecret("owner/name/PAYMENTS_API_KEY")).toBe(false);
+    expect(looksSecret("the reporting-conversions@example-project-494908 service account")).toBe(false);
   });
 
   test("rejects long letters-only random tokens but not long identifiers", () => {

@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **An account name in a note no longer looks like a credential.** The guard now splits text at `@` too, so a
+  service account name such as `reader@example-project-123456` passes validation.
+
 - **The tally skill reviews every key.** A new section walks an agent through coverage, missing facts, expiries
   and limits the provider offers, and stale keys, so a clean `check` is not mistaken for an up-to-date registry.
 
