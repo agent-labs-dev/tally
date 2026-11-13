@@ -519,7 +519,8 @@ async function dispatch(
       // The first read happens before the screen is taken, so a broken file is reported like any other command's.
       const loaded = await loadAll(flags, env, cwd);
       if (loaded.errors.length > 0) return failed(loaded.errors);
-      const first = await report(flags, loaded, env, io);
+      // The screen opens on the file alone, which reads in milliseconds; the stores fill in once it is up.
+      const first = await report({ ...flags, offline: true }, loaded, env, io);
       const reload = async () => {
         const again = await loadAll(flags, env, cwd);
         if (again.errors.length > 0) throw new Error(again.errors.map((error) => error.message).join("; "));
@@ -527,7 +528,7 @@ async function dispatch(
       };
       // Loaded only here, so every other command, and the CI action, runs without the UI's dependencies installed.
       const { showUi } = await import("./ui");
-      await showUi(first, reload);
+      await showUi(first, reload, !flags.offline);
       return { value: null, silent: true };
     }
     case "schema":

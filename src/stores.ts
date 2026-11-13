@@ -122,14 +122,17 @@ export function isMetadataCommand(argv: readonly string[]): boolean {
 /** Looks up GitHub owner types, leaving out owners whose lookup fails because gh is unavailable or access is denied. */
 export async function ownerTypes(owners: Iterable<string>, run: Run): Promise<Map<string, string>> {
   const types = new Map<string, string>();
-  for (const owner of new Set(owners)) {
-    if (owner === "unknown") continue;
-    try {
-      types.set(owner, (await run(["gh", "api", "--jq", ".type", `users/${owner}`])).trim());
-    } catch {
-      // An owner lookup is advisory. A failed lookup must not make a check fail or invent an owner type.
-    }
-  }
+  await Promise.all(
+    [...new Set(owners)]
+      .filter((owner) => owner !== "unknown")
+      .map(async (owner) => {
+        try {
+          types.set(owner, (await run(["gh", "api", "--jq", ".type", `users/${owner}`])).trim());
+        } catch {
+          // An owner lookup is advisory. A failed lookup must not make a check fail or invent an owner type.
+        }
+      }),
+  );
   return types;
 }
 
@@ -663,14 +666,17 @@ export async function observe(
   fetcher: Fetch = fetch,
   env: Record<string, string | undefined> = process.env,
 ): Promise<Observation[]> {
+  // The sources are read at once and merged in file order, so a later source still wins a shared key.
+  const listed = await Promise.all(
+    sources.map((source) => {
+      const store = stores[source.kind];
+      if (!store) throw new Error(`no reader for source kind ${source.kind}`);
+      const get = store.api ? apiGet(source.kind, store.api, source, env, fetcher) : offlineGet;
+      return store.list(source, { run, get, env });
+    }),
+  );
   const all = new Map<string, Observation>();
-  for (const source of sources) {
-    const store = stores[source.kind];
-    if (!store) throw new Error(`no reader for source kind ${source.kind}`);
-    const get = store.api ? apiGet(source.kind, store.api, source, env, fetcher) : offlineGet;
-    for (const observation of await store.list(source, { run, get, env }))
-      all.set(observationKey(observation), observation);
-  }
+  for (const observation of listed.flat()) all.set(observationKey(observation), observation);
   return [...all.values()];
 }
 

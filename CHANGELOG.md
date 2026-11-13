@@ -9,8 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Agents can start with bare `tally`.** Outside a terminal it prints schema JSON, including the standard parser's option definitions. Interactive terminals open the dashboard.
 
-- **Run `tally` to open the dashboard.** The compact, borderless list follows the terminal palette. Details start collapsed and `enter` expands or collapses them below
-  and keyboard hints at the bottom. Selection uses the terminal accent colour with contrasting text, while a separate navigation row keeps the overview readable. OpenTUI handles selection, scrolling and filter editing. `tally ui` remains an alias.
+- **Run `tally` to open the dashboard.** It opens at once from the tally file and fills in what the secret stores
+  report when they answer, so a slow store never holds the screen. Keys nest by group, then service, and every group
+  starts folded with a count of what its keys need, so an expiring key shows without opening it. A service with one
+  key is that key's row. `enter` or `→` opens a group, `←` folds it or goes to its parent, a filter opens every group,
+  and `enter` on a key shows its facts and findings below the list. The dashboard uses one dark palette in every
+  terminal, and a reload keeps the selected key. `tally ui` remains an alias.
+- **Secret stores are read at once.** `check`, `notify` and the dashboard list every source and look up every owner in
+  parallel instead of one after another.
 - **CLI options use the standard parser.** Options accept `--name=value`, repeated locations and the `--` separator.
 
 - **A local Unix pass store is a source.** `pass: LABEL` (optionally with a `filter` name prefix) lists the entries under
