@@ -23,6 +23,10 @@ gitleaks over the workflows and the full history.
 
 `assets/logo.svg` is the mark. `python3 scripts/wordmark.py` regenerates the light and dark wordmarks the README shows.
 
+To release, a PR sets `version` in `package.json` and renames `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` with a fresh
+`[Unreleased]` above it. Once it merges, `git tag -s vX.Y.Z` on main and push the tag: `release.yml` checks the tag
+matches `package.json` and publishes the GitHub release with that entry as its notes.
+
 ## Layout
 
 - `src/schema.ts`: the entry format, the validator and the credential-shaped text guard
@@ -53,3 +57,7 @@ gitleaks over the workflows and the full history.
 - The entry `id` is unique within the file. Issue ids and `rotated` history come from it, so renaming a key renames its
   issue too.
 - Commits are signed Conventional Commits.
+
+## Standards
+
+This repository meets the `repo-standards` pack (RS-* ids).
