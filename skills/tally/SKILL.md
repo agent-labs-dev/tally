@@ -1,6 +1,6 @@
 ---
 name: tally
-description: Track a repository's API keys by metadata, check which keys expire soon, record a rotation, declare a new key, or set up scheduled key-expiry issues with the tally CLI. Use when a key is expiring or expired, after replacing a key, when a workflow uses a secret nobody declared, when a new key needs its owner, locations, limit and expiry written down, or when a repository should watch expiries daily. tally holds metadata only: it never reads, stores or prints a value.
+description: Track a repository's API keys by metadata, check which keys expire soon, record a rotation, declare a new key, or set up scheduled key-expiry issues with the tally CLI. Use when a key is expiring or expired, when reviewing whether every key is registered, current and set to expire where the provider allows, after replacing a key, when a workflow uses a secret nobody declared, when a new key needs its owner, locations, limit and expiry written down, or when a repository should watch expiries daily. tally holds metadata only: it never reads, stores or prints a value.
 ---
 
 # tally
@@ -39,6 +39,30 @@ tally rotated ID --expires YYYY-MM-DD
 ```
 
 The new date is what future checks warn on. Without it the key keeps its old expiry and the issue stays open.
+
+## Reviewing every key
+
+Run this when asked whether keys are up to date or expire properly, and on a schedule. `check` reports only what
+the file and its sources can show, so a clean `check` proves nothing while the file misses a key or a fact. Work
+through these in order. Each one is done when its criterion holds for every entry:
+
+1. **Coverage.** Every store that holds this file's keys is a `source`, and `tally check` reports no `unregistered`.
+   A source's `filter` narrows the listing to what this file owns, so a filter that names one entry hides the rest
+   of the store. List one source per owned prefix, and leave a prefix out only when another tally file declares it.
+   Name that file in a comment.
+2. **Facts.** No `unknown-*` gap remains. Look each fact up in the provider's dashboard or key settings. Where
+   only the owner can see it, ask them and leave `unknown` until they answer.
+3. **Expiry where offered.** Every `expires: none` has an `expiresNote` naming where that was confirmed and when.
+   Re-read the provider's current key docs for each one without that. When the provider does offer an expiry, the
+   key gets a date: mint a replacement with one, and record it with `tally rotated ID --expires YYYY-MM-DD`. Use the
+   shortest lifetime the key's runbook allows, and one year when nothing says otherwise. A short-lived token that a
+   tool re-mints stays `none`, and its note names the longer-lived credential that lapses instead.
+4. **Limit where offered.** Every `limit: none` is a provider with no cap. Where the provider offers one, set it
+   there first, then write `hard` or `soft` and the amount.
+5. **Freshness.** `stale`, `idle` and `unused` findings are each a question put to the owner, as described above.
+
+The review is done when `tally check` exits 0 with no gap findings, or when each remaining gap is a question the
+owner has been asked. Report the keys you changed and the questions still open.
 
 ## Setting up a repository
 
