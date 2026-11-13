@@ -295,9 +295,42 @@ test("a reload keeps the selected key, and starts over when that key is gone", a
     expect(setup.captureCharFrame()).toContain("book-4");
     next = { ...full, entries: full.entries.slice(0, 3) };
     await press(setup, ["r"]);
-    const frame = setup.captureCharFrame();
+    let frame = setup.captureCharFrame();
     expect(frame).toContain("› ● key-0");
     expect(frame).toContain("book-0");
+    next = full;
+    await press(setup, ["r"]);
+    frame = setup.captureCharFrame();
+    expect(frame).toContain("› ● key-0");
+    expect(frame).not.toContain("book-4");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("a slow first read does not overwrite a newer reload", async () => {
+  let finishFirst!: (report: Report) => void;
+  let loads = 0;
+  const fresh = { ...report, findings: [] };
+  let setup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    setup = await testRender(
+      <App
+        initial={report}
+        load={() => (++loads === 1 ? new Promise<Report>((done) => (finishFirst = done)) : Promise.resolve(fresh))}
+        onQuit={() => {}}
+        stale
+      />,
+      { width: 100, height: 16 },
+    );
+  });
+  await setup.renderOnce();
+  try {
+    await press(setup, ["r"]);
+    expect(setup.captureCharFrame()).toContain("0 action");
+    await act(async () => finishFirst(report));
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("0 action");
   } finally {
     await act(async () => setup.renderer.destroy());
   }

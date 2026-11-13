@@ -414,14 +414,20 @@ export function App({ initial, load, onQuit, stale }: AppProps) {
     setSelected(rowKeys[cursor.current]);
   };
 
+  // Only the newest read may land: the first store read can outlast a reload typed after it.
+  const reads = useRef(0);
   const reload = () => {
+    const read = ++reads.current;
     setStatus("reading…");
     load().then(
       (next) => {
+        if (read !== reads.current) return;
         setReport(next);
         setStatus("");
       },
-      (error: unknown) => setStatus(error instanceof Error ? error.message : String(error)),
+      (error: unknown) => {
+        if (read === reads.current) setStatus(error instanceof Error ? error.message : String(error));
+      },
     );
   };
 
@@ -429,6 +435,11 @@ export function App({ initial, load, onQuit, stale }: AppProps) {
   useEffect(() => {
     if (stale) reload();
   }, []);
+
+  // A selected row that is gone is forgotten, so the cursor stays at the top if the row comes back.
+  useEffect(() => {
+    if (selected !== undefined && !rowKeys.includes(selected)) setSelected(undefined);
+  });
 
   const refilter = (value: string) => {
     setFilter(value);
