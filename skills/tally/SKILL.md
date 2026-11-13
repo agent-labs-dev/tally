@@ -46,10 +46,12 @@ Run this when asked whether keys are up to date or expire properly, and on a sch
 the file and its sources can show, so a clean `check` proves nothing while the file misses a key or a fact. Work
 through these in order. Each one is done when its criterion holds for every entry:
 
-1. **Coverage.** Every store that holds this file's keys is a `source`, and `tally check` reports no `unregistered`.
-   A source's `filter` narrows the listing to what this file owns, so a filter that names one entry hides the rest
-   of the store. List one source per owned prefix, and leave a prefix out only when another tally file declares it.
-   Name that file in a comment.
+1. **Coverage.** Every store tally can read that holds this file's keys is a `source`, and `tally check` reports no
+   `unregistered`. A store tally cannot read, such as a dotfile or another vault, has no source: list what it holds
+   by hand and confirm each item has an entry. A `filter` narrows the listing in that store's own syntax, so make sure
+   it still covers everything the file owns. For a `pass` or `aws` source the filter is a name prefix: one that names
+   a single entry hides the rest of the store, so list one source per owned prefix. Leave a part of a store out only
+   when another tally file declares it, and name that file in a comment.
 2. **Facts.** No `unknown-*` gap remains. Look each fact up in the provider's dashboard or key settings. Where
    only the owner can see it, ask them and leave `unknown` until they answer.
 3. **Expiry where offered.** Every `expires: none` has an `expiresNote` naming where that was confirmed and when.
