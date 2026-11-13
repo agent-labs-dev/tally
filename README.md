@@ -339,8 +339,13 @@ tally add payments-api \
 `expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. Global flags are
 `--config PATH` and `--json`. `--offline` skips the secret stores in `check`, `notify`, `init` and `ui`.
 
-With a terminal, `tally` opens a terminal dashboard with the most urgent key first. Rows stay compact; `enter` expands or collapses the selected key's facts and findings below the list. It uses OpenTUI selection, input and scrolling controls. `tally ui` is an alias. `tab` switches to findings,
-`/` filters, `s` changes the sort, `r` reloads and `q` quits. `d` opens and focuses the details for scrolling; `esc` collapses them and returns to the list. Explicit `tally ui` needs a terminal and does not take `--json`. Bare `tally` outside a terminal, or with `--json`, prints the CLI schema without reading stores. The schema includes options from the standard parser.
+With a terminal, `tally` opens a terminal dashboard with the most urgent key first. It opens from the tally file at once
+and fills in the secret stores when they answer. Keys nest by group, then service, and each group starts folded with a
+count of what its keys need. `enter` or `→` opens a group, `←` folds it or moves to its parent, and `enter` on a key
+shows its facts and findings below the list. `tally ui` is an alias. `tab` switches to findings, `/` filters (and opens
+every group), `s` changes the sort, `r` reloads and `q` quits. `d` opens and focuses the details for scrolling; `esc`
+collapses them and returns to the list. Explicit `tally ui` needs a terminal and does not take `--json`. Bare `tally`
+outside a terminal, or with `--json`, prints the CLI schema without reading stores. The schema includes options from the standard parser.
 
 ## Daily issues
 

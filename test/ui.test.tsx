@@ -68,12 +68,12 @@ async function press(setup: Awaited<ReturnType<typeof testRender>>, keys: string
 
 const rowOf = (frame: string, text: string) => frame.split("\n").findIndex((line) => line.includes(text));
 
-test("lists the most urgent key first with its detail below", async () => {
+test("lists the most urgent key first, and enter opens its detail below", async () => {
   const setup = await render();
   try {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("2 action");
-    expect(frame).toContain("▶ ! payments-api");
+    expect(frame).toContain("› ● payments-api");
     expect(rowOf(frame, "payments-api")).toBeLessThan(rowOf(frame, "mail-token"));
     expect(rowOf(frame, "in 8 days")).toBeGreaterThan(rowOf(frame, "mail-token"));
     expect(frame).toContain("PAYMENTS_API_KEY");
@@ -82,12 +82,12 @@ test("lists the most urgent key first with its detail below", async () => {
   }
 });
 
-test("the select moves the selection and the detail follows", async () => {
+test("moving the selection moves the detail with it", async () => {
   const setup = await render();
   try {
     await press(setup, ["j"]);
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("▶ ✓ mail-token");
+    expect(frame).toContain("› ● mail-token");
     expect(frame).toContain("MAIL_TOKEN");
     expect(frame).not.toContain("PAYMENTS_API_KEY");
   } finally {
@@ -99,14 +99,14 @@ test("tab shows findings, including secrets no key declares, with the list and d
   const setup = await render();
   try {
     const listRow = rowOf(setup.captureCharFrame(), "mail-token");
-    const detailRow = rowOf(setup.captureCharFrame(), "service");
+    const detailRow = rowOf(setup.captureCharFrame(), "service ");
     await press(setup, ["\t"]);
-    expect(rowOf(setup.captureCharFrame(), "service")).toBe(detailRow);
+    expect(rowOf(setup.captureCharFrame(), "service ")).toBe(detailRow);
     await press(setup, ["j"]);
     const frame = setup.captureCharFrame();
     expect(frame).toContain("findings");
     expect(frame).toContain("NEW_TOKEN is used but not declared");
-    expect(rowOf(frame, "NEW_TOKEN is used")).toBeGreaterThan(listRow);
+    expect(rowOf(frame, "› ● unregistered")).toBe(listRow);
   } finally {
     await act(async () => setup.renderer.destroy());
   }
@@ -157,10 +157,10 @@ function longReport(): Report {
   };
 }
 
-async function renderLong(width: number, height: number) {
+async function renderReport(initial: Report, width = 100, height = 16, stale = false) {
   let setup!: Awaited<ReturnType<typeof testRender>>;
   await act(async () => {
-    setup = await testRender(<App initial={longReport()} load={async () => longReport()} onQuit={() => {}} />, {
+    setup = await testRender(<App initial={initial} load={async () => initial} onQuit={() => {}} stale={stale} />, {
       width,
       height,
     });
@@ -170,7 +170,7 @@ async function renderLong(width: number, height: number) {
 }
 
 test("d focuses the details, which scroll to the last location, and esc returns to the list", async () => {
-  const setup = await renderLong(100, 16);
+  const setup = await renderReport(longReport());
   try {
     expect(setup.captureCharFrame()).not.toContain("LOCATION_13");
     await press(setup, ["d"]);
@@ -186,14 +186,14 @@ test("d focuses the details, which scroll to the last location, and esc returns 
       await Bun.sleep(50);
     });
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).not.toContain("details ·");
+    expect(setup.captureCharFrame()).not.toContain("esc back");
   } finally {
     await act(async () => setup.renderer.destroy());
   }
 });
 
 test("a long runbook wraps in the details instead of being cut off", async () => {
-  const setup = await renderLong(40, 24);
+  const setup = await renderReport(longReport(), 40, 24);
   try {
     await press(setup, ["RETURN"]);
     expect(setup.captureCharFrame().replace(/\s+/g, "")).toContain("end-of-details");
@@ -202,12 +202,12 @@ test("a long runbook wraps in the details instead of being cut off", async () =>
   }
 });
 
-test("the hints wrap between bindings in a narrow terminal and keep q quit", async () => {
-  const setup = await renderLong(24, 16);
+test("a narrow terminal drops hints whole and keeps q quit", async () => {
+  const setup = await renderReport(longReport(), 30, 16);
   try {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("q quit");
-    expect(frame).toContain("/ filter");
+    expect(frame).not.toContain("r reload");
     expect(frame).not.toMatch(/q qu\s*$/m);
   } finally {
     await act(async () => setup.renderer.destroy());
@@ -215,8 +215,9 @@ test("the hints wrap between bindings in a narrow terminal and keep q quit", asy
 });
 
 test("on a short terminal the details shrink and the list keeps a row", async () => {
-  const setup = await renderLong(100, 8);
+  const setup = await renderReport(longReport(), 100, 8);
   try {
+    await press(setup, ["RETURN"]);
     const frame = setup.captureCharFrame();
     expect(frame).toContain("payments-api");
     expect(frame).toContain("q quit");
@@ -249,15 +250,37 @@ test("keys typed in the same batch as the slash are filter text, not app actions
   }
 });
 
-test("reload resets the selected row and details together after the list shrinks then grows", async () => {
+const many = (count: number): Report => {
   const template = report.entries[1];
   if (!template) throw new Error("fixture");
-  const full: Report = {
+  return {
     ...report,
-    entries: Array.from({ length: 6 }, (_, i) => ({ ...template, id: `key-${i}`, runbook: `book-${i}` })),
+    entries: Array.from({ length: count }, (_, i) => ({
+      ...template,
+      id: `key-${i}`,
+      service: `service-${i}`,
+      runbook: `book-${i}`,
+    })),
     findings: [],
   };
-  let next = { ...full, entries: full.entries.slice(0, 3) };
+};
+
+test("moves typed faster than a render each move one row", async () => {
+  const setup = await renderReport(many(6), 100, 24);
+  try {
+    await act(async () => {
+      for (const key of ["j", "j", "j"]) setup.mockInput.pressKey(key);
+    });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("› ● key-3");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("a reload keeps the selected key, and starts over when that key is gone", async () => {
+  const full = many(6);
+  let next = full;
   let setup!: Awaited<ReturnType<typeof testRender>>;
   await act(async () => {
     setup = await testRender(<App initial={full} load={async () => next} onQuit={() => {}} />, {
@@ -267,44 +290,104 @@ test("reload resets the selected row and details together after the list shrinks
   });
   await setup.renderOnce();
   try {
-    await press(setup, ["RETURN"]);
-    await press(setup, ["j", "j", "j", "j", "j"]);
+    await press(setup, ["RETURN", "j", "j", "j", "j"]);
     await press(setup, ["r"]);
-    next = full;
+    expect(setup.captureCharFrame()).toContain("book-4");
+    next = { ...full, entries: full.entries.slice(0, 3) };
     await press(setup, ["r"]);
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("▶ ✓ key-0");
+    expect(frame).toContain("› ● key-0");
     expect(frame).toContain("book-0");
-    expect(frame).not.toContain("book-5");
   } finally {
     await act(async () => setup.renderer.destroy());
   }
 });
 
-test("compact rows show their group and filter by it", async () => {
-  const entry = report.entries[0];
+test("groups start folded with what their keys need, and open into services and keys", async () => {
+  const [payments, mail] = report.entries;
+  if (!payments || !mail) throw new Error("fixture");
+  const grouped: Report = {
+    ...report,
+    entries: [
+      { ...payments, group: "owner-name" },
+      { ...mail, id: "mail-a", group: "owner-name" },
+      { ...mail, id: "mail-b", group: "owner-name" },
+      { ...mail, id: "solo", group: "other-repo" },
+    ],
+    findings: report.findings.slice(0, 1),
+  };
+  const setup = await renderReport(grouped);
+  try {
+    let frame = setup.captureCharFrame();
+    expect(frame.split("\n")[0]).toContain("1 action · 0 gaps · 4 keys · 2 groups");
+    expect(frame).toMatch(/› owner-name\s+● 1 expiring\s+3 keys/);
+    expect(frame).toMatch(/› other-repo\s+1 key/);
+    expect(frame).not.toContain("mail-a");
+    await press(setup, ["RETURN"]);
+    frame = setup.captureCharFrame();
+    // A service with one key is that key's row; a service with more is its own fold.
+    expect(frame).toContain("payments-api");
+    expect(frame).toMatch(/› mail\s+2 keys/);
+    expect(frame).not.toContain("mail-a");
+    await press(setup, ["j", "j", "l"]);
+    frame = setup.captureCharFrame();
+    expect(rowOf(frame, "mail-a")).toBeGreaterThan(rowOf(frame, "⌄ mail"));
+    await press(setup, ["j", "h", "h"]);
+    expect(setup.captureCharFrame()).not.toContain("mail-a");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("a filter opens every group so a match is never hidden", async () => {
+  const entry = report.entries[1];
   if (!entry) throw new Error("fixture");
-  const grouped: Report = { ...report, entries: [{ ...entry, group: "owner-name" }], findings: [] };
+  const grouped: Report = {
+    ...report,
+    entries: [
+      { ...entry, group: "owner-name" },
+      { ...entry, id: "other", group: "owner-name" },
+    ],
+    findings: [],
+  };
+  const setup = await renderReport(grouped);
+  try {
+    expect(setup.captureCharFrame()).not.toContain("mail-token");
+    await press(setup, ["/", "o", "w", "n", "e", "r", "\r"]);
+    expect(setup.captureCharFrame()).toContain("mail-token");
+  } finally {
+    await act(async () => setup.renderer.destroy());
+  }
+});
+
+test("a screen opened from the file alone reads the stores once it is up", async () => {
+  let loads = 0;
   let setup!: Awaited<ReturnType<typeof testRender>>;
+  const read = { ...report, findings: [] };
   await act(async () => {
-    setup = await testRender(<App initial={grouped} load={async () => grouped} onQuit={() => {}} />, {
-      width: 100,
-      height: 16,
-    });
+    setup = await testRender(
+      <App
+        initial={report}
+        load={async () => {
+          loads++;
+          return read;
+        }}
+        onQuit={() => {}}
+        stale
+      />,
+      { width: 100, height: 16 },
+    );
   });
   await setup.renderOnce();
   try {
-    const frame = setup.captureCharFrame();
-    expect(frame.split("\n")[0]).toContain("0 action · 0 gaps · 1 keys · 1 groups");
-    expect(frame).toContain("owner-name / payments-api");
-    await press(setup, ["/", "o", "w", "n", "e", "r", "-", "n", "\r"]);
-    expect(setup.captureCharFrame()).toContain("payments-api");
+    expect(loads).toBe(1);
+    expect(setup.captureCharFrame()).toContain("0 action");
   } finally {
     await act(async () => setup.renderer.destroy());
   }
 });
 
-test("details start collapsed and the select toggles them without changing selection", async () => {
+test("details start collapsed and enter toggles them without changing selection", async () => {
   const setup = await render(async () => report, false);
   try {
     expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
@@ -312,7 +395,7 @@ test("details start collapsed and the select toggles them without changing selec
     expect(setup.captureCharFrame()).toContain("PAYMENTS_API_KEY");
     await press(setup, ["RETURN"]);
     expect(setup.captureCharFrame()).not.toContain("PAYMENTS_API_KEY");
-    expect(setup.captureCharFrame()).toContain("▶ ! payments-api");
+    expect(setup.captureCharFrame()).toContain("› ● payments-api");
   } finally {
     await act(async () => setup.renderer.destroy());
   }
