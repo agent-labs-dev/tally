@@ -36,6 +36,23 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
+      # A lightweight or unsigned tag points GitHub at no verified tag object, so it never publishes.
+      - name: Check the tag is signed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")
+          if [ "$(jq -r .object.type <<<"$ref")" != tag ]; then
+            echo "::error::$GITHUB_REF_NAME is a lightweight tag; push one made with git tag -s"
+            exit 1
+          fi
+          verified=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$(jq -r .object.sha <<<"$ref")" --jq .verification.verified)
+          if [ "$verified" != true ]; then
+            echo "::error::$GITHUB_REF_NAME has no verified signature"
+            exit 1
+          fi
+
       - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
