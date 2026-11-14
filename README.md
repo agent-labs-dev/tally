@@ -94,6 +94,7 @@ An entry has these fields:
 | `expires` | `YYYY-MM-DD`, `unknown` (nobody has looked yet) or `none` (with a reason) |
 | `expiresNote` | Why the date is what it is, or why there is none |
 | `limit` | Free text such as `$200/mo`, `unknown` or `none` |
+| `rotated` | Optional. `YYYY-MM-DD` of the last rotation, written by `tally rotated` or by hand. `check` does not warn on it; the key's issue shows it as its last rotation |
 | `runbook` | Optional path or URL to your own rotation steps |
 | `note` | Anything a person needs to know before rotating |
 
@@ -336,7 +337,8 @@ tally add payments-api \
 ```
 
 `--expires` and `--limit` default to `unknown`, which `check` reports as a gap. `tally rotated` clears the old
-`expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. Global flags are
+`expiresNote` and records the date you pass, so the new expiry is the one future checks warn on. It also writes the
+rotation date to `rotated` on the entry, and the key's issue shows it. Global flags are
 `--config PATH` and `--json`. `--offline` skips the secret stores in `check`, `notify`, `init` and `ui`.
 
 With a terminal, `tally` opens a terminal dashboard with the most urgent key first. It opens from the tally file at once
