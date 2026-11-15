@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **Locations can be added to an existing key.** `tally locate ID --location KIND:REF` records another copy without
+  rewriting the entry by hand.
+
 - **The entry field table names `rotated`.** `tally rotated` writes the rotation date there, a key rotated elsewhere can
   record it by hand, `check` does not warn on it, and the key's issue shows it as the last rotation.
 

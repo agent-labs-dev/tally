@@ -92,6 +92,45 @@ describe("cli", () => {
     expect((again.json.error as { code: string }).code).toBe("error");
   });
 
+  test("locate appends unique locations and preserves the entry fields", async () => {
+    const { config, run } = harness();
+    await run(
+      addArgs("payments-api", [
+        "--expires",
+        "2027-01-01",
+        "--expires-note",
+        "annual",
+        "--limit",
+        "1000/min",
+        "--note",
+        "owned by payments",
+      ]),
+    );
+    const located = await run([
+      "locate",
+      "payments-api",
+      "--location",
+      "vault:kv/svc",
+      "--location",
+      "github:PAYMENTS_API_KEY",
+    ]);
+    expect(located.code).toBe(0);
+    const file = await loadTallyFile(config);
+    expect(file.entries[0]).toMatchObject({
+      id: "payments-api",
+      service: "example-provider",
+      owner: "team-payments",
+      expires: "2027-01-01",
+      expiresNote: "annual",
+      limit: "1000/min",
+      note: "owned by payments",
+      locations: [
+        { kind: "vault", ref: "kv/svc" },
+        { kind: "github", ref: "PAYMENTS_API_KEY" },
+      ],
+    });
+  });
+
   test("group is optional on add and filters list when present", async () => {
     const { run } = harness();
     expect((await run(addArgs("one"))).code).toBe(0);
