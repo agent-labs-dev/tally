@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **The entry field table names `rotated`.** `tally rotated` writes the rotation date there, a key rotated elsewhere can
+  record it by hand, `check` does not warn on it, and the key's issue shows it as the last rotation.
+
 - **An account name in a note no longer looks like a credential.** The guard now splits text at `@` too, so a
   service account name such as `reader@example-project-123456` passes validation.
 
