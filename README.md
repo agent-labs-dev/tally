@@ -262,7 +262,7 @@ In CI, log in to the store before the tally step, for example with workload iden
         with:
           workload_identity_provider: projects/NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
           service_account: tally-reader@PROJECT.iam.gserviceaccount.com
-      - uses: OWNER/tally@v1
+      - uses: agent-labs-dev/tally@v0.5.0
 ```
 
 ## Provider key listings
@@ -305,7 +305,7 @@ read them, and pass them only to the tally step:
 ```yaml
     environment: tally
     steps:
-      - uses: OWNER/tally@v1
+      - uses: agent-labs-dev/tally@v0.5.0
         env:
           TALLY_OPENROUTER_MANAGEMENT_KEY: ${{ secrets.TALLY_OPENROUTER_MANAGEMENT_KEY }}
 ```
@@ -321,6 +321,7 @@ tally list [--group G] [--service S]
 tally validate                     # parse the file and report every error
 tally add ID --service S --owner O --location KIND:REF [--location ...]
 tally rotated ID --expires DATE
+tally locate ID --location KIND:REF [--location ...]
 tally issues sync [--repo OWNER/NAME] [--dry-run]
 tally schema                       # the CLI contract: fields, commands and exit codes
 ```
@@ -375,10 +376,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: OWNER/tally@v1
+      - uses: agent-labs-dev/tally@v0.5.0
 ```
 
-Replace `OWNER/tally@v1` with the repository that publishes this action. The workflow's own token is enough, so the
+Pin a release tag such as `v0.5.0` or a commit SHA: there is no floating major tag. The workflow's own token is enough, so the
 job needs `issues: write` and nothing else. The action's `config` input defaults to `.tally.yaml`, and it sets
 `TALLY_CONFIG` for the run, so pass `config:` only to use another path.
 
