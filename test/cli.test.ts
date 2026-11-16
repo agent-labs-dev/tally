@@ -313,6 +313,8 @@ describe("cli", () => {
     expect(readFileSync(config, "utf8")).toContain("provisioned: false");
     const result = await run(["check", "--offline"]);
     expect(result.json.findings).toEqual([]);
+    expect((await run(["rotated", "later-key", "--expires", "2030-01-01"])).code).toBe(0);
+    expect(readFileSync(config, "utf8")).not.toContain("provisioned");
   });
 
   test("issues sync without a repo leaves repository discovery to gh", async () => {

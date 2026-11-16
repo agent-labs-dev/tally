@@ -495,6 +495,8 @@ async function dispatch(
       entry.expires = expires;
       entry.rotated = flags.today ?? todayUtc();
       delete entry.expiresNote;
+      // A key with an expiry exists, so it is no longer unprovisioned.
+      delete entry.provisioned;
       if (flags.fingerprint !== undefined) entry.fingerprint = flags.fingerprint;
       await writeTallyFile(loaded.path, loaded.config, loaded.entries);
       return {
