@@ -106,7 +106,7 @@ else.
 An entry with `provisioned: false` records a credential the code reads, often an optional one, before anyone creates
 it. Its locations name where the key will live, so the variable still counts as declared. It needs `expires` and
 `limit` set to `unknown`, and `check` reports no expiry or limit gap and no `missing` location for it. Once a store
-that was read holds a copy, `check` reports a `provisioned` gap, along with the expiry and limit gaps: record the
+that was read holds a copy with a value (a gcp secret with no enabled version does not count), `check` reports a `provisioned` gap, along with the expiry and limit gaps: record the
 facts and remove the field. `tally add ID ... --unprovisioned` writes such an entry.
 
 Unknown top-level settings are errors, `expires: none` is rejected without an `expiresNote`, and two entries cannot

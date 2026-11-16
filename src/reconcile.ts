@@ -185,9 +185,14 @@ export function resolveEntries(
   });
 }
 
-/** Marked not provisioned, and no store that was read holds a copy, so it has no expiry or limit to record. */
+/** The stored copies of an entry that hold a value: a secret created with no value yet is not a key. */
+function heldCopies(entry: Entry, observed: readonly Observation[] | undefined, repo?: string): Observation[] {
+  return observationsOf(entry, observed, repo).filter((observation) => !observation.empty);
+}
+
+/** Marked not provisioned, and no store that was read holds a value, so it has no expiry, limit or age to record. */
 function unprovisioned(entry: Entry, observed: readonly Observation[] | undefined, repo?: string): boolean {
-  return entry.provisioned === false && observationsOf(entry, observed, repo).length === 0;
+  return entry.provisioned === false && heldCopies(entry, observed, repo).length === 0;
 }
 
 export const expiryRule: Rule = (entries, { today, warnDays, observed, repo }): Finding[] =>
@@ -386,6 +391,7 @@ export const unusedRule: Rule = (entries, { referenced, repo }) => {
 /** A stored value nobody has changed in `staleDays` is a key nobody has rotated. The oldest copy decides. */
 export const staleRule: Rule = (entries, { today, staleDays = 365, observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
+    if (unprovisioned(entry, observed, repo)) return [];
     const changed = observationsOf(entry, observed, repo)
       .flatMap((observation) => observation.changed ?? [])
       .sort()[0];
@@ -472,9 +478,7 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
 export const provisionedRule: Rule = (entries, { observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
     if (entry.provisioned !== false) return [];
-    const where = observationsOf(entry, observed, repo).map(
-      (observation) => `${observation.kind}: ${observation.scope}`,
-    );
+    const where = heldCopies(entry, observed, repo).map((observation) => `${observation.kind}: ${observation.scope}`);
     if (!where.length) return [];
     return [
       {

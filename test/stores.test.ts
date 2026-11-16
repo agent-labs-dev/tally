@@ -73,6 +73,7 @@ describe("store readers", () => {
         scope: "my-project",
         name: "MAIL_TOKEN",
         changed: "2025-05-05",
+        empty: true,
         expires: "none",
         expiresNote: "set by the vendor",
       },

@@ -28,6 +28,8 @@ export interface Observation {
   name: string;
   /** When the value last changed: the newest enabled version, the last rotation, or the last update. */
   changed?: string;
+  /** The store holds the secret but no value yet, such as a gcp secret with no enabled version. */
+  empty?: true;
   /** A date, or `none` when a provider reports that the key never expires. */
   expires?: string;
   /** When the provider last saw the key used. */
@@ -231,6 +233,7 @@ const gcp: Store = {
           scope: source.scope,
           name,
           changed: day(versions[0]?.createTime) ?? day(secret.createTime),
+          ...(versions.length ? {} : { empty: true as const }),
           deletion: day(secret.expireTime),
           ...gcpFacts(name, secret.annotations),
         };

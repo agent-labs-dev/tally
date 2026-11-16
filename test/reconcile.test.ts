@@ -156,6 +156,11 @@ describe("provisioned: false", () => {
     expect(reconcile([unbuilt], withRepo({ templated, sources, observed: [] }))).toEqual([]);
   });
 
+  test("a stored secret with no value yet is not a copy of the key", () => {
+    const observed = [{ kind: "gcp", scope: "prod", name: "LATER_KEY", changed: "2020-01-01", empty: true as const }];
+    expect(reconcile([unbuilt], { ...context, sources, observed })).toEqual([]);
+  });
+
   test("a stored copy is reported, and the expiry and limit gaps return", () => {
     const observed = [{ kind: "gcp", scope: "prod", name: "LATER_KEY" }];
     const findings = reconcile([unbuilt], { ...context, sources, observed });
