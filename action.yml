@@ -4,6 +4,9 @@ inputs:
   config:
     description: Path to the tally file
     default: .tally.yaml
+  org-assignee:
+    description: GitHub handle assigned the issues for keys an organization owns, such as a repository variable
+    default: ""
 runs:
   using: composite
   steps:
@@ -13,3 +16,4 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         TALLY_CONFIG: ${{ inputs.config }}
+        TALLY_ORG_ASSIGNEE: ${{ inputs.org-assignee }}

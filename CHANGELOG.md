@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **The entry field table names `rotated`.** `tally rotated` writes the rotation date there, a key rotated elsewhere can
   record it by hand, `check` does not warn on it, and the key's issue shows it as the last rotation.
+- **Keys an organization owns can go to a person.** Set the action's `org-assignee` input, or
+  `TALLY_ORG_ASSIGNEE`, to a handle, and their issues are assigned to it with no `org-owner` gap. A repository
+  that keeps personal handles out of its tree can pass it from a repository variable.
 
 - **An account name in a note no longer looks like a credential.** The guard now splits text at `@` too, so a
   service account name such as `reader@example-project-123456` passes validation.

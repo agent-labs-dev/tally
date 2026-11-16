@@ -1,4 +1,4 @@
-import type { Finding, Severity } from "./reconcile";
+import type { Context, Finding, Severity } from "./reconcile";
 import type { Entry } from "./schema";
 
 /** Runs `gh` with these arguments and returns stdout. Injected so tests never touch GitHub. */
@@ -25,6 +25,8 @@ export type Action =
   | { do: "close"; marker: string; number: number; title: string };
 
 const markerPattern = /<!-- tally:(\S+) -->/;
+/** Records who tally assigned, so a later sync removes that person, and only them, when the assignee changes. */
+const assigneePattern = /<!-- tally-assignee:(\S+) -->/;
 const gapsMarker = "gaps";
 
 function runbookLink(runbook: string): string {
@@ -62,24 +64,35 @@ function rotationSteps(entry: Entry): string[] {
 }
 
 /** One issue per action finding, plus one digest for every gap. */
-export function desiredIssues(findings: readonly Finding[], entries: readonly Entry[]): Desired[] {
+export function desiredIssues(
+  findings: readonly Finding[],
+  entries: readonly Entry[],
+  { owners, orgAssignee }: Pick<Context, "owners" | "orgAssignee"> = {},
+): Desired[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  // gh always rejects an organization assignee, and the org-owner gap already reports it, so no retry each run.
-  const orgOwned = new Set(findings.filter((finding) => finding.kind === "org-owner").map((finding) => finding.key));
+  // gh always rejects an organization assignee, so an organization's keys go to orgAssignee, or to nobody.
+  const assignee = (owner: string | undefined) =>
+    owner === undefined || owner === "unknown"
+      ? undefined
+      : owners?.get(owner) === "Organization"
+        ? orgAssignee
+        : owner;
   const desired: Desired[] = [];
   for (const finding of findings) {
     if (finding.severity !== "action") continue;
     const entry = byId.get(finding.key);
     const header = `<!-- tally:${finding.id} -->`;
+    const login = assignee(entry?.owner);
+    const body = entry
+      ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
+      : [header, finding.detail ?? finding.title].join("\n\n");
     desired.push({
       marker: finding.id,
       title: finding.title,
       labels: [label, `tally:${finding.kind}`],
       severity: "action",
-      assignee: entry?.owner === "unknown" || orgOwned.has(finding.key) ? undefined : entry?.owner,
-      body: entry
-        ? [header, describe(entry), "", ...rotationSteps(entry)].join("\n")
-        : [header, finding.detail ?? finding.title].join("\n\n"),
+      assignee: login,
+      body: login === undefined ? body : `${body}\n\n<!-- tally-assignee:${login} -->`,
     });
   }
   const gaps = findings.filter((finding) => finding.severity === "gap");
@@ -191,7 +204,14 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
     const current = (existing.labels ?? []).map((item) => item.name);
     const stale = current.filter((name) => name.startsWith("tally:") && !want.labels.includes(name));
     const missing = want.labels.filter((name) => !current.includes(name));
-    // The body names the owner, so an owner change always lands here and the new owner is added.
+    // The body records the assignee, so a change always lands here: the new one is added, and the one tally
+    // assigned before is removed, leaving anyone a person assigned by hand.
+    const previous = assigneePattern.exec(existing.body)?.[1];
+    const replaced = (existing.assignees ?? []).find(
+      (item) =>
+        item.login.toLowerCase() === previous?.toLowerCase() &&
+        item.login.toLowerCase() !== want.assignee?.toLowerCase(),
+    )?.login;
     const assigned =
       want.assignee === undefined ||
       (existing.assignees ?? []).some((item) => item.login.toLowerCase() === want.assignee?.toLowerCase());
@@ -224,6 +244,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
         want.body,
         ...missing.flatMap((name) => ["--add-label", name]),
         ...stale.flatMap((name) => ["--remove-label", name]),
+        ...(replaced ? ["--remove-assignee", replaced] : []),
       ],
       ...assign,
       action,

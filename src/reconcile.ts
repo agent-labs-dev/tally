@@ -33,6 +33,8 @@ export interface Context {
   observed?: Observation[];
   /** GitHub owner types, when owner lookups were allowed. Organization owners cannot receive issue assignments. */
   owners?: Map<string, string>;
+  /** The GitHub handle assigned keys an organization owns, so a repository can keep personal handles out of its tree. */
+  orgAssignee?: string;
   /** Secret names the repository references, or undefined outside a checkout. Both scan rules stay quiet then. */
   referenced?: Map<string, string[]>;
   /** Credential-named variables the code reads from its env templates, or undefined outside a git checkout. */
@@ -275,7 +277,7 @@ export const limitRule: Rule = (entries, { observed, repo }) =>
     return [];
   });
 
-export const unknownFactsRule: Rule = (entries, { owners }) =>
+export const unknownFactsRule: Rule = (entries, { owners, orgAssignee }) =>
   entries.flatMap((entry): Finding[] => {
     const findings: Finding[] = [];
     if (entry.service === "unknown")
@@ -294,13 +296,13 @@ export const unknownFactsRule: Rule = (entries, { owners }) =>
         key: entry.id,
         title: `${entry.id} has no recorded owner`,
       });
-    else if (owners?.get(entry.owner) === "Organization")
+    else if (owners?.get(entry.owner) === "Organization" && orgAssignee === undefined)
       findings.push({
         id: `gap:${entry.id}:owner`,
         kind: "org-owner",
         severity: "gap",
         key: entry.id,
-        title: `${entry.id} is owned by organization ${entry.owner}, which cannot be assigned an issue`,
+        title: `${entry.id} is owned by organization ${entry.owner}, which cannot be assigned an issue. Set TALLY_ORG_ASSIGNEE to assign one person instead`,
       });
     return findings;
   });
