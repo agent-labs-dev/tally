@@ -91,6 +91,7 @@ An entry has these fields:
 | `group` | Optional. Who uses it, any slug, for example `payments` or `personal` |
 | `owner` | The lowercase GitHub handle responsible for rotating it, or `unknown`. Action issues are assigned to it |
 | `locations` | Every place the value is stored, one per line |
+| `provisioned` | Optional. `false` for a key the code reads that nobody has created yet. See below |
 | `expires` | `YYYY-MM-DD`, `unknown` (nobody has looked yet) or `none` (with a reason) |
 | `expiresNote` | Why the date is what it is, or why there is none |
 | `limit` | Free text such as `$200/mo`, `unknown` or `none` |
@@ -101,6 +102,12 @@ An entry has these fields:
 `label` and `fingerprint` are optional. `label` is the provider's own name for the key. `fingerprint` is the redacted
 suffix the provider shows, at most 6 characters, which is enough to tell two keys apart without being useful to anyone
 else.
+
+An entry with `provisioned: false` records a credential the code reads, often an optional one, before anyone creates
+it. Its locations name where the key will live, so the variable still counts as declared. It needs `expires` and
+`limit` set to `unknown`, and `check` reports no expiry or limit gap and no `missing` location for it. Once a store
+that was read holds a copy, `check` reports a `provisioned` gap, along with the expiry and limit gaps: record the
+facts and remove the field. `tally add ID ... --unprovisioned` writes such an entry.
 
 Unknown top-level settings are errors, `expires: none` is rejected without an `expiresNote`, and two entries cannot
 share an `id`. Nothing in the file may look like a credential: comments and quoting are scanned too, before parsing.
@@ -133,11 +140,12 @@ rotated.
 | `expired`, `expiring` | action | The date has passed, or is inside `warnDays` |
 | `deletion` | action | A store is scheduled to delete a declared secret within `warnDays` |
 | `unknown-expiry`, `unknown-limit`, `unknown-service`, `unknown-owner`, `org-owner` | gap | A fact is missing, or an organization owner cannot be assigned. The gaps share one digest issue |
+| `provisioned` | gap | An entry marked `provisioned: false` is held by a store that was read, so its facts need recording |
 | `no-expiry`, `no-limit` | gap | The entry records nothing, and its provider says the key never expires or has no spend limit |
 | `unregistered` | action | A workflow or an env template names a secret no entry declares |
 | `unused` | action | An entry declares an Actions secret no workflow reads |
 | `stale` | action | A store says the value has not changed in `staleDays` |
-| `missing` | action | An entry names a secret in a store that was read, and the store does not hold it |
+| `missing` | action | An entry names a secret in a store that was read, and the store does not hold it, unless it is marked `provisioned: false` |
 | `idle` | action | Its provider has not seen the key used in `idleDays` |
 
 A store that holds a secret no entry declares also reports it as `unregistered`.
@@ -322,7 +330,7 @@ tally validate                     # parse the file and report every error
 tally add ID --service S --owner O --location KIND:REF [--location ...]
 tally rotated ID --expires DATE
 tally locate ID --location KIND:REF [--location ...]
-tally issues sync [--repo OWNER/NAME] [--dry-run]
+tally issues sync [--repo OWNER/NAME] [--dry-run]   # --dry-run lists each planned create, edit and close, and who it is assigned to
 tally schema                       # the CLI contract: fields, commands and exit codes
 ```
 

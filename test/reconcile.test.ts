@@ -142,6 +142,36 @@ describe("limitRule", () => {
   });
 });
 
+describe("provisioned: false", () => {
+  const unbuilt = entry({
+    locations: [{ kind: "gcp", ref: "prod/LATER_KEY" }],
+    provisioned: false,
+    expires: "unknown",
+    limit: "unknown",
+  });
+  const sources = [{ kind: "gcp", scope: "prod" }];
+
+  test("reports no expiry, limit or missing finding, and still declares the name it reads", () => {
+    const templated = new Map([["LATER_KEY", [".env.example"]]]);
+    expect(reconcile([unbuilt], withRepo({ templated, sources, observed: [] }))).toEqual([]);
+  });
+
+  test("a stored copy is reported, and the expiry and limit gaps return", () => {
+    const observed = [{ kind: "gcp", scope: "prod", name: "LATER_KEY" }];
+    const findings = reconcile([unbuilt], { ...context, sources, observed });
+    expect(findings.map((finding) => finding.id)).toEqual([
+      "gap:payments-api:expiry",
+      "gap:payments-api:limit",
+      "gap:payments-api:provisioned",
+    ]);
+    expect(findings[2]).toMatchObject({
+      kind: "provisioned",
+      severity: "gap",
+      title: "payments-api is marked provisioned: false, but gcp: prod holds a copy",
+    });
+  });
+});
+
 describe("unregisteredRule", () => {
   const referenced = new Map([["PAYMENTS_API_KEY", [".github/workflows/deploy.yml"]]]);
 

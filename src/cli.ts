@@ -40,8 +40,8 @@ Commands print JSON when stdout is not a terminal or with --json. Help and versi
   tally validate                report tally file errors
   tally add ID --service S --owner O --location KIND:REF [--location ...] [--group G]
          [--expires DATE|unknown|none] [--expires-note T] [--limit L] [--label T]
-         [--fingerprint F] [--runbook PATH] [--note T]
-                                 add a key's metadata
+         [--fingerprint F] [--runbook PATH] [--note T] [--unprovisioned]
+                                 add a key's metadata; --unprovisioned records a key the code reads that nobody created
   tally locate ID --location KIND:REF [--location ...]
                                  add stored copies to an existing key
   tally rotated ID --expires DATE [--fingerprint F] [--today DATE]
@@ -82,6 +82,7 @@ interface Flags {
   repo?: string;
   dryRun: boolean;
   offline: boolean;
+  unprovisioned: boolean;
 }
 
 class UsageError extends Error {}
@@ -138,6 +139,7 @@ function parse(args: readonly string[]): Flags {
     version: values.version ?? false,
     dryRun: values["dry-run"] ?? false,
     offline: values.offline ?? false,
+    unprovisioned: values.unprovisioned ?? false,
     config: values.config,
     today: values.today === undefined ? undefined : usageDate("--today", values.today),
     group: values.group,
@@ -161,6 +163,7 @@ const cliOptions = {
   version: { type: "boolean" },
   "dry-run": { type: "boolean" },
   offline: { type: "boolean" },
+  unprovisioned: { type: "boolean" },
   config: { type: "string" },
   today: { type: "string" },
   group: { type: "string" },
@@ -355,7 +358,7 @@ function schema() {
     options: cliOptions,
     defaults: { terminal: "ui", nonTerminal: "schema" },
     entryFields:
-      "id, service, group, owner, label, fingerprint, locations, expires, expiresNote, limit, rotated, runbook, note",
+      "id, service, group, owner, label, fingerprint, locations, provisioned, expires, expiresNote, limit, rotated, runbook, note",
     findingFields: "id, kind, severity (action or gap), key, title, days, detail",
     configFields:
       "warnDays, staleDays, idleDays, issueRepo, secretPatterns, ignore, credentialNames, ignorePaths, sources, keys",
@@ -457,6 +460,9 @@ async function dispatch(
       if (loaded.entries.some((entry) => entry.id === id)) throw new Error(`${withheld(id)} already exists`);
       const expires = flags.expires ?? "unknown";
       if (expires !== "unknown" && expires !== "none") usageDate("--expires", expires);
+      const limit = flags.limit ?? "unknown";
+      if (flags.unprovisioned && (expires !== "unknown" || limit !== "unknown"))
+        throw new UsageError("--unprovisioned takes no --expires or --limit, because no key exists yet");
       const entry: Entry = {
         id,
         service: flags.service,
@@ -465,9 +471,10 @@ async function dispatch(
         label: flags.label,
         fingerprint: flags.fingerprint,
         locations: flags.locations.map(location),
+        ...(flags.unprovisioned ? { provisioned: false as const } : {}),
         expires,
         expiresNote: flags.expiresNote,
-        limit: flags.limit ?? "unknown",
+        limit,
         runbook: flags.runbook,
         note: flags.note,
       };
@@ -531,7 +538,8 @@ async function dispatch(
         .map((action) => {
           const unassigned = action.do !== "close" && action.unassigned ? ` (not assigned: ${action.unassigned})` : "";
           const assignOnly = action.do === "edit" && action.assignOnly ? " (assign only)" : "";
-          return `${action.do} ${action.marker}${"number" in action ? ` #${action.number}` : ""}${assignOnly}${unassigned}`;
+          const to = action.do !== "close" && action.assignee ? ` -> ${action.assignee}` : "";
+          return `${action.do} ${action.marker}${"number" in action ? ` #${action.number}` : ""}${to}${assignOnly}${unassigned}`;
         })
         .join("\n");
       return { value: { repo: repo ?? null, dryRun: flags.dryRun, actions }, text: text || "no changes" };
