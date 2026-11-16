@@ -42,6 +42,8 @@ Commands print JSON when stdout is not a terminal or with --json. Help and versi
          [--expires DATE|unknown|none] [--expires-note T] [--limit L] [--label T]
          [--fingerprint F] [--runbook PATH] [--note T]
                                  add a key's metadata
+  tally locate ID --location KIND:REF [--location ...]
+                                 add stored copies to an existing key
   tally rotated ID --expires DATE [--fingerprint F] [--today DATE]
                                  record a rotation
   tally issues sync [--repo OWNER/NAME] [--dry-run] [--today DATE]
@@ -492,6 +494,27 @@ async function dispatch(
         value: { id, expires: entry.expires, rotated: entry.rotated },
         text: `rotated ${id}: expires ${entry.expires}, rotated ${entry.rotated}`,
       };
+    }
+    case "locate": {
+      const [id, ...extra] = rest;
+      if (id === undefined) throw new UsageError("usage: tally locate ID --location KIND:REF [--location ...]");
+      if (extra.length > 0) throw new UsageError(`unexpected argument ${withheld(extra[0] ?? "")} after locate`);
+      if (flags.locations.length === 0) throw new UsageError("locate needs at least one --location");
+      const loaded = await loadAll(flags, env, cwd);
+      if (loaded.errors.length > 0) return failed(loaded.errors);
+      const entry = loaded.entries.find((candidate) => candidate.id === id);
+      if (!entry) throw new Error(`no entry ${withheld(id)} in ${withheld(loaded.path)}`);
+      const additions = flags.locations.map(location);
+      const existing = new Set(entry.locations.map((item) => `${item.kind}:${item.ref}`));
+      for (const item of additions) {
+        const key = `${item.kind}:${item.ref}`;
+        if (!existing.has(key)) {
+          entry.locations.push(item);
+          existing.add(key);
+        }
+      }
+      await writeTallyFile(loaded.path, loaded.config, loaded.entries);
+      return { value: { id, locations: entry.locations }, text: `located ${id} in ${withheld(loaded.path)}` };
     }
     case "issues": {
       const [verb, ...extra] = rest;
