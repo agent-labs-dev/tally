@@ -1,0 +1,16 @@
+name: Feature
+description: Suggest a check, a store or a change
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What a key's owner cannot see or do today, and with which store or provider.
+    validations:
+      required: true
+  - type: textarea
+    id: metadata
+    attributes:
+      label: Metadata it needs
+      description: The listing or field tally would read. tally never reads a secret value.

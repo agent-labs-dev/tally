@@ -7,6 +7,10 @@
 
 </div>
 
+[![ci](https://img.shields.io/github/actions/workflow/status/agent-labs-dev/tally/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/agent-labs-dev/tally/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/agent-labs-dev/tally?style=flat-square)](https://github.com/agent-labs-dev/tally/releases)
+![license](https://img.shields.io/badge/license-MIT-475569?style=flat-square)
+
 A registry of a repository's API keys, tokens and certificates: who owns each one, where it is stored, its limit and
 when it expires. Every key is declared in one `.tally.yaml` at the repository root, and a scheduled workflow files an
 issue before a key expires or when a workflow uses a secret nobody declared.
@@ -15,6 +19,21 @@ tally never reads, stores or prints a secret value. It records metadata only: na
 file is checked for credential-shaped text before it is written, and again every time it is validated.
 
 Agents are the main users. Output is JSON when asked for it, and the exit codes say what to do next.
+
+## Install
+
+The action needs no install: add the workflow in [Daily issues](#daily-issues). The CLI runs on
+[Bun](https://bun.sh):
+
+```sh
+git clone https://github.com/agent-labs-dev/tally
+cd tally
+bun install --frozen-lockfile
+bun link
+tally --version
+```
+
+`bun link` puts `tally` in `~/.bun/bin`, which the Bun installer adds to `PATH`.
 
 ## Quick start
 
@@ -270,7 +289,7 @@ In CI, log in to the store before the tally step, for example with workload iden
         with:
           workload_identity_provider: projects/NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
           service_account: tally-reader@PROJECT.iam.gserviceaccount.com
-      - uses: agent-labs-dev/tally@v0.5.0
+      - uses: agent-labs-dev/tally@v0.6.0
 ```
 
 ## Provider key listings
@@ -313,7 +332,7 @@ read them, and pass them only to the tally step:
 ```yaml
     environment: tally
     steps:
-      - uses: agent-labs-dev/tally@v0.5.0
+      - uses: agent-labs-dev/tally@v0.6.0
         env:
           TALLY_OPENROUTER_MANAGEMENT_KEY: ${{ secrets.TALLY_OPENROUTER_MANAGEMENT_KEY }}
 ```
@@ -384,10 +403,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: agent-labs-dev/tally@v0.5.0
+      - uses: agent-labs-dev/tally@v0.6.0
 ```
 
-Pin a release tag such as `v0.5.0` or a commit SHA: there is no floating major tag. The workflow's own token is enough, so the
+Pin a release tag such as `v0.6.0` or a commit SHA: there is no floating major tag. The workflow's own token is enough, so the
 job needs `issues: write` and nothing else. The action's `config` input defaults to `.tally.yaml`, and it sets
 `TALLY_CONFIG` for the run, so pass `config:` only to use another path.
 
@@ -449,3 +468,8 @@ bun run gate
 
 `bun run gate` runs Biome, `tsc`, the tests, the changelog check and `tally validate`. To give an agent the workflow,
 install the skill in [`skills/tally/SKILL.md`](skills/tally/SKILL.md).
+
+## Help and contributing
+
+Open an issue for a bug or an idea, and read [CONTRIBUTING.md](CONTRIBUTING.md) before a pull request. Report a
+vulnerability privately, as [SECURITY.md](SECURITY.md) describes. tally is [MIT licensed](LICENSE).
