@@ -127,7 +127,9 @@ describe("syncIssues", () => {
     const desired = desiredIssues([expired], [entry()]);
     const { calls, gh } = fakeGh([]);
     const actions = await syncIssues(gh, "owner/repo", desired, false);
-    expect(actions).toEqual([{ do: "create", marker: "expiry:payments-api", title: expired.title }]);
+    expect(actions).toEqual([
+      { do: "create", marker: "expiry:payments-api", title: expired.title, assignee: "team-payments" },
+    ]);
     expect(writes(calls).filter((args) => args[1] === "create")).toHaveLength(1);
   });
 
@@ -160,7 +162,9 @@ describe("syncIssues", () => {
   test("edits the issue when the title or body changed", async () => {
     const { gh } = fakeGh([{ number: 7, title: "stale title", body: "<!-- tally:expiry:payments-api -->" }]);
     const actions = await syncIssues(gh, "owner/repo", desiredIssues([expired], [entry()]), false);
-    expect(actions).toEqual([{ do: "edit", marker: "expiry:payments-api", number: 7, title: expired.title }]);
+    expect(actions).toEqual([
+      { do: "edit", marker: "expiry:payments-api", number: 7, title: expired.title, assignee: "team-payments" },
+    ]);
   });
 
   test("reports a failed assignment after editing the issue", async () => {
@@ -174,6 +178,7 @@ describe("syncIssues", () => {
         marker: "expiry:payments-api",
         number: 7,
         title: expired.title,
+        assignee: "team-payments",
         unassigned: "team-payments: gh issue create failed: not a collaborator",
       },
     ]);
@@ -203,6 +208,7 @@ describe("syncIssues", () => {
         marker: "expiry:payments-api",
         number: 7,
         title: expired.title,
+        assignee: "team-payments",
         assignOnly: true,
         unassigned: "team-payments: gh issue create failed: not a collaborator",
       },
@@ -247,7 +253,9 @@ describe("syncIssues", () => {
   test("dryRun makes no write calls, including no label calls", async () => {
     const { calls, gh } = fakeGh([]);
     const actions = await syncIssues(gh, "owner/repo", desiredIssues([expired], [entry()]), true);
-    expect(actions).toEqual([{ do: "create", marker: "expiry:payments-api", title: expired.title }]);
+    expect(actions).toEqual([
+      { do: "create", marker: "expiry:payments-api", title: expired.title, assignee: "team-payments" },
+    ]);
     expect(calls).toHaveLength(1);
     expect(calls.every((args) => args[0] === "issue" && args[1] === "list")).toBe(true);
   });

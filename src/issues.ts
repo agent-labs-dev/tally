@@ -20,8 +20,16 @@ export interface Desired {
 }
 
 export type Action =
-  | { do: "create"; marker: string; title: string; unassigned?: string }
-  | { do: "edit"; marker: string; number: number; title: string; assignOnly?: true; unassigned?: string }
+  | { do: "create"; marker: string; title: string; assignee?: string; unassigned?: string }
+  | {
+      do: "edit";
+      marker: string;
+      number: number;
+      title: string;
+      assignee?: string;
+      assignOnly?: true;
+      unassigned?: string;
+    }
   | { do: "close"; marker: string; number: number; title: string };
 
 const markerPattern = /<!-- tally:(\S+) -->/;
@@ -46,6 +54,7 @@ function describe(entry: Entry): string {
   if (entry.group) lines.splice(3, 0, `| Group | ${entry.group} |`);
   if (entry.label) lines.push(`| Provider label | ${entry.label} |`);
   if (entry.fingerprint) lines.push(`| Fingerprint | \`${entry.fingerprint}\` |`);
+  if (entry.provisioned === false) lines.push("| Provisioned | no |");
   if (entry.rotated) lines.push(`| Last rotated | ${entry.rotated} |`);
   if (entry.runbook) lines.push(`| Runbook | ${runbookLink(entry.runbook)} |`);
   lines.push("", "**Stored in**", "", ...entry.locations.map((location) => `- ${location.kind}: \`${location.ref}\``));
@@ -121,6 +130,11 @@ export function desiredIssues(
   return desired;
 }
 
+/** The planned assignee, so a dry run shows who each issue would go to. */
+function assignee(want: Desired): { assignee?: string } {
+  return want.assignee === undefined ? {} : { assignee: want.assignee };
+}
+
 interface Open {
   number: number;
   title: string;
@@ -185,7 +199,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
   for (const want of desired) {
     const existing = byMarker.get(want.marker);
     if (!existing) {
-      const action: Action = { do: "create", marker: want.marker, title: want.title };
+      const action: Action = { do: "create", marker: want.marker, title: want.title, ...assignee(want) };
       actions.push(action);
       addLabels(want, want.labels);
       const call = [
@@ -223,6 +237,7 @@ export async function syncIssues(gh: Gh, repo: string | undefined, desired: read
       marker: want.marker,
       number: existing.number,
       title: want.title,
+      ...assignee(want),
       ...(unchanged ? { assignOnly: true as const } : {}),
     };
     actions.push(action);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addSecretPatterns, looksSecret, parseEntry, withheld } from "../src/schema";
+import { addSecretPatterns, type Entry, looksSecret, parseEntry, serialise, withheld } from "../src/schema";
 
 function valid(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -54,6 +54,19 @@ describe("parseEntry", () => {
   test("rejects expires none without a note, and accepts it with one", () => {
     expect(rejects(valid({ expires: "none" }))).toContain("expires: none needs an expiresNote saying why");
     expect(rejects(valid({ expires: "none", expiresNote: "the provider sets no expiry" }))).toEqual([]);
+  });
+
+  test("provisioned: false records a key nobody created, and needs expiry and limit unknown", () => {
+    const unknown = { expires: "unknown", limit: "unknown" };
+    expect(parseEntry(valid({ ...unknown, provisioned: false })).entry?.provisioned).toBe(false);
+    expect(parseEntry(valid({ provisioned: true })).entry?.provisioned).toBeUndefined();
+    expect(rejects(valid({ provisioned: "no" }))).toContain("provisioned must be true or false");
+    expect(rejects(valid({ provisioned: false }))).toContain(
+      "provisioned: false needs expires and limit unknown, because no key exists yet",
+    );
+    const entry = parseEntry(valid({ ...unknown, provisioned: false })).entry;
+    expect(entry && serialise(entry).provisioned).toBe(false);
+    expect(Object.keys(serialise(parseEntry(valid()).entry as Entry))).not.toContain("provisioned");
   });
 
   test("an id has no file to match, so any slug is accepted", () => {

@@ -7,6 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+- **A dry run shows who each issue would be assigned to.** `tally issues sync --dry-run` adds `assignee` to every
+  planned create and edit in JSON, and `-> HANDLE` in text, so an owner handle or `TALLY_ORG_ASSIGNEE` can be
+  checked before any issue is filed.
+- **An entry can record a key nobody has created yet.** `provisioned: false` (or `tally add ... --unprovisioned`)
+  marks a credential the code reads but that does not exist. The variable counts as declared, and `check` reports no
+  expiry or limit gap and no `missing` location for it. When a store holds a copy, a `provisioned` gap asks for its
+  facts.
+
 ## [0.5.0] - 2026-11-16
 
 - **Locations can be added to an existing key.** `tally locate ID --location KIND:REF` records another copy without

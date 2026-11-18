@@ -185,8 +185,19 @@ export function resolveEntries(
   });
 }
 
+/** The stored copies of an entry that hold a value: a secret created with no value yet is not a key. */
+function heldCopies(entry: Entry, observed: readonly Observation[] | undefined, repo?: string): Observation[] {
+  return observationsOf(entry, observed, repo).filter((observation) => !observation.empty);
+}
+
+/** Marked not provisioned, and no store that was read holds a value, so it has no expiry, limit or age to record. */
+function unprovisioned(entry: Entry, observed: readonly Observation[] | undefined, repo?: string): boolean {
+  return entry.provisioned === false && heldCopies(entry, observed, repo).length === 0;
+}
+
 export const expiryRule: Rule = (entries, { today, warnDays, observed, repo }): Finding[] =>
   entries.flatMap((entry): Finding[] => {
+    if (unprovisioned(entry, observed, repo)) return [];
     const { value: expires, reported } = observedOr(entry.expires, entry, observed, "expires", repo);
     if (expires === "none")
       return reported
@@ -253,6 +264,7 @@ export const deletionRule: Rule = (entries, { today, warnDays, observed, repo })
 
 export const limitRule: Rule = (entries, { observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
+    if (unprovisioned(entry, observed, repo)) return [];
     const { value, reported } = observedOr(entry.limit, entry, observed, "limit", repo);
     if (value === "unknown")
       return [
@@ -379,6 +391,7 @@ export const unusedRule: Rule = (entries, { referenced, repo }) => {
 /** A stored value nobody has changed in `staleDays` is a key nobody has rotated. The oldest copy decides. */
 export const staleRule: Rule = (entries, { today, staleDays = 365, observed, repo }) =>
   entries.flatMap((entry): Finding[] => {
+    if (unprovisioned(entry, observed, repo)) return [];
     const changed = observationsOf(entry, observed, repo)
       .flatMap((observation) => observation.changed ?? [])
       .sort()[0];
@@ -427,6 +440,8 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
     });
   }
   for (const { entry, location } of locations) {
+    // A key nobody created is expected to be absent from every store.
+    if (entry.provisioned === false) continue;
     const ofKind = sources.filter((source) => source.kind === location.kind);
     if (!ofKind.length) continue;
     if (observed.some((observation) => isStored(location, observation, repo))) continue;
@@ -455,6 +470,26 @@ export const storeRule: Rule = (entries, { observed, sources, ignore, referenced
   }
   return findings;
 };
+
+/**
+ * A key marked `provisioned: false` that a store now holds was created since, so the entry's facts need recording.
+ * Its expiry and limit gaps come back at the same time.
+ */
+export const provisionedRule: Rule = (entries, { observed, repo }) =>
+  entries.flatMap((entry): Finding[] => {
+    if (entry.provisioned !== false) return [];
+    const where = heldCopies(entry, observed, repo).map((observation) => `${observation.kind}: ${observation.scope}`);
+    if (!where.length) return [];
+    return [
+      {
+        id: `gap:${entry.id}:provisioned`,
+        kind: "provisioned",
+        severity: "gap",
+        key: entry.id,
+        title: `${entry.id} is marked provisioned: false, but ${[...new Set(where)].join(", ")} holds a copy`,
+      },
+    ];
+  });
 
 /** A key its provider has not seen used in `idleDays` is one nothing needs, so a candidate to revoke. The newest use decides. */
 export const idleRule: Rule = (entries, { today, idleDays = 90, observed, repo }) =>
@@ -488,6 +523,7 @@ export const defaultRules: Rule[] = [
   staleRule,
   idleRule,
   storeRule,
+  provisionedRule,
 ];
 
 export function reconcile(entries: readonly Entry[], context: Context, rules = defaultRules): Finding[] {

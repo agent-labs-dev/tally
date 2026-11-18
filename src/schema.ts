@@ -17,6 +17,11 @@ export interface Entry {
   label?: string;
   fingerprint?: string;
   locations: Location[];
+  /**
+   * `false` for a key the code reads that nobody has created yet. Expiry and limit stay `unknown` without being
+   * reported until a store holds a copy. Absent means the key exists.
+   */
+  provisioned?: false;
   /** A date, `unknown` (nobody has looked yet) or `none` (the provider sets none, with a reason in the note). */
   expires: string;
   expiresNote?: string;
@@ -34,6 +39,7 @@ const fields = new Set([
   "label",
   "fingerprint",
   "locations",
+  "provisioned",
   "expires",
   "expiresNote",
   "limit",
@@ -178,6 +184,11 @@ export function parseEntry(raw: unknown): { entry?: Entry; errors: string[] } {
       if (location) locations.push(location);
     }
 
+  const provisioned = record.provisioned;
+  if (provisioned !== undefined && typeof provisioned !== "boolean") errors.push("provisioned must be true or false");
+  if (provisioned === false && (expires !== "unknown" || limit !== "unknown"))
+    errors.push("provisioned: false needs expires and limit unknown, because no key exists yet");
+
   const label = text("label", false);
   const runbook = text("runbook", false);
   const note = text("note", false);
@@ -192,6 +203,7 @@ export function parseEntry(raw: unknown): { entry?: Entry; errors: string[] } {
       label,
       fingerprint,
       locations,
+      ...(provisioned === false ? { provisioned } : {}),
       expires: expires as string,
       expiresNote,
       limit: limit as string,
@@ -213,6 +225,7 @@ export function serialise(entry: Entry): Record<string, unknown> {
     label: entry.label,
     fingerprint: entry.fingerprint,
     locations: entry.locations.map((location) => ({ [location.kind]: location.ref })),
+    provisioned: entry.provisioned,
     expires: entry.expires,
     expiresNote: entry.expiresNote,
     limit: entry.limit,

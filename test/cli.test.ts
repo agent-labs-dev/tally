@@ -280,6 +280,43 @@ describe("cli", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("issues sync --dry-run shows who each issue would be assigned to", async () => {
+    const { root, run } = harness();
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "ci.yml"), "on: push\njobs: {}\n");
+    const facts = ["--expires", "2030-01-01", "--limit", "none"];
+    await run(["add", "org", "--service", "x", "--owner", "example-org", "--location", "github:Y", ...facts]);
+    const gh: Gh = async (args) => (args[1] === "list" ? "[]" : "");
+    const orgOwner: Run = async (argv) => {
+      if (argv[0] === "gh" && argv[1] === "api" && argv[4] === "users/example-org") return "Organization\n";
+      throw new Error(`unexpected store command ${argv.join(" ")}`);
+    };
+    const args = ["issues", "sync", "--repo", "owner/name", "--dry-run", "--today", "2026-11-02"];
+    const env = { TALLY_ORG_ASSIGNEE: "someone" };
+    const result = await run([...args, "--json"], { gh, run: orgOwner, env });
+    expect(result.json.actions).toEqual([
+      {
+        do: "create",
+        marker: "unused:org:Y",
+        title: "org: Y is declared but no workflow uses it",
+        assignee: "someone",
+      },
+    ]);
+    const text = await run(args, { gh, run: orgOwner, env, isTTY: true });
+    expect(text.text).toBe("create unused:org:Y -> someone");
+  });
+
+  test("add --unprovisioned records a key nobody created, with no expiry or limit gaps", async () => {
+    const { config, run } = harness();
+    expect((await run(addArgs("later-key", ["--unprovisioned", "--limit", "10/day"]))).code).toBe(2);
+    expect((await run(addArgs("later-key", ["--unprovisioned"]))).code).toBe(0);
+    expect(readFileSync(config, "utf8")).toContain("provisioned: false");
+    const result = await run(["check", "--offline"]);
+    expect(result.json.findings).toEqual([]);
+    expect((await run(["rotated", "later-key", "--expires", "2030-01-01"])).code).toBe(0);
+    expect(readFileSync(config, "utf8")).not.toContain("provisioned");
+  });
+
   test("issues sync without a repo leaves repository discovery to gh", async () => {
     const { run } = harness();
     await run(addArgs("old-key", ["--expires", "2020-01-01", "--limit", "1000/min"]));

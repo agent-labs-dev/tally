@@ -22,7 +22,9 @@ used in `idleDays`. Exit 0 means nothing needs doing
 today. Exit 1 is an error and exit 2 is wrong usage.
 
 For an expiry finding, tell the user the key id, the expiry date, the owner and the runbook. For `unregistered`, including a
-secret found in a store, the documented fix is to add the entry, or to list the name under `ignore` when it is not a credential. For `unused`, ask
+secret found in a store, the documented fix is to add the entry, or to list the name under `ignore` when it is not a credential. When the code reads a key nobody has created, add
+the entry with `--unprovisioned` instead of leaving `unknown` facts. A `provisioned` gap means a store now holds that
+key: record its facts and remove `provisioned: false`. For `unused`, ask
 the owner before revoking: say that Actions secrets are only readable by workflows, so it is likely unused.
 For `stale`, tell the owner the date the stored value last changed and ask them to rotate it, then record the new
 expiry with `tally rotated`. For `missing`, the secret was deleted or renamed in its store: ask the owner which, then
