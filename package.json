@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "bun test",
-    "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate"
+    "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate",
+    "gate:changed": "biome ci --no-errors-on-unmatched $(git diff --name-only --diff-filter=d $(git merge-base origin/main HEAD)) && tsc --noEmit && bun test --changed=$(git merge-base origin/main HEAD) && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",
