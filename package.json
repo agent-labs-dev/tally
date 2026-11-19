@@ -10,7 +10,7 @@
   "scripts": {
     "test": "bun test",
     "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate",
-    "gate:changed": "{ git diff -z --name-only --diff-filter=d \"$(git merge-base origin/main HEAD)\"; git ls-files -z --others --exclude-standard; } | xargs -0 -r biome ci --no-errors-on-unmatched && tsc --noEmit && bun test --changed=$(git merge-base origin/main HEAD) && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate"
+    "gate:changed": "scripts/gate-changed"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# bun run gate:changed: the gate, scoped to this branch's changes.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+base=$(git merge-base origin/main HEAD)
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
+
+# The listing goes to a file first so a failing git command stops the gate instead of reading as no changes.
+git diff -z --name-only --diff-filter=d "$base" >"$list"
+git ls-files -z --others --exclude-standard >>"$list"
+xargs -0 -r biome ci --no-errors-on-unmatched <"$list"
+
+tsc --noEmit
+bun test --changed="$base"
+bun scripts/changelog.ts --check
+bun src/index.ts --config .tally.yaml validate
