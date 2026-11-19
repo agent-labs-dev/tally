@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "bun test",
-    "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate"
+    "gate": "biome ci . && tsc --noEmit && bun test && bun scripts/changelog.ts --check && bun src/index.ts --config .tally.yaml validate",
+    "gate:changed": "scripts/gate-changed"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",

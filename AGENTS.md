@@ -7,25 +7,15 @@ matter as much as the prose.
 
 ## Commands
 
-```sh
-bun install --frozen-lockfile
-bun run gate
-bunx biome ci .
-bunx tsc --noEmit
-bun test
-bun scripts/changelog.ts --check
-bun src/index.ts --config .tally.yaml validate
-```
-
-`bun run gate` runs the rest in one command. Every change that touches behaviour needs a `CHANGELOG.md` entry under
-`[Unreleased]`, because the changelog script turns an entry into release notes. CI also runs actionlint, zizmor and
-gitleaks over the workflows and the full history.
-
-`assets/logo.svg` is the mark. `python3 scripts/wordmark.py` regenerates the light and dark wordmarks the README shows.
-
-To release, a PR sets `version` in `package.json` and renames `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` with a fresh
-`[Unreleased]` above it. Once it merges, `git tag -s vX.Y.Z` on main and push the tag: `release.yml` checks the tag
-matches `package.json` and publishes the GitHub release with that entry as its notes.
+- `bun install --frozen-lockfile`, then `bun run gate`: biome, tsc, tests, the changelog check and `validate` on this
+  repository's `.tally.yaml`.
+- `bun run gate:changed`: the same, linting only files changed against `origin/main` and running the tests they reach.
+- A change to behaviour needs a `CHANGELOG.md` entry under `[Unreleased]`; the changelog script turns it into release
+  notes. CI also runs actionlint, zizmor and gitleaks.
+- `python3 scripts/wordmark.py` regenerates the wordmarks the README shows from `assets/logo.svg`.
+- Release: a PR sets `version` in `package.json` and renames `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` with a fresh
+  `[Unreleased]` above it. After it merges, `git tag -s vX.Y.Z` on main and push the tag; `release.yml` checks the tag against
+  `package.json` and publishes the entry as the notes.
 
 ## Layout
 
@@ -60,4 +50,4 @@ matches `package.json` and publishes the GitHub release with that entry as its n
 
 ## Standards
 
-This repository meets the `repo-standards` pack (RS-* ids).
+- `repo-standards`: the RS-* requirements every cjber and agent-labs-dev repo meets; its `audit.py` checks this repo.
