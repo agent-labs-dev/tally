@@ -1,0 +1,27 @@
+name: Bug
+description: tally reported the wrong thing or failed
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste a secret value here, even a revoked one. Names, locations and dates are enough.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or workflow you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: entry
+    attributes:
+      label: The entry or setting involved
+      description: The relevant part of `.tally.yaml`, with names changed if you need to.
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: tally version
+      description: The release tag or commit the action or CLI ran.
+    validations:
+      required: true

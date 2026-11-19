@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
+- **tally is open source under the MIT licence.** Public repositories can now use the action, and the README shows
+  how to install the CLI with Bun.
 - **A dry run shows who each issue would be assigned to.** `tally issues sync --dry-run` adds `assignee` to every
   planned create and edit in JSON, and `-> HANDLE` in text, so an owner handle or `TALLY_ORG_ASSIGNEE` can be
   checked before any issue is filed.
